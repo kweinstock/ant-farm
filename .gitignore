@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Caches
+.eslintcache
+*.tsbuildinfo
+
+# Editor / OS
+.DS_Store
+
+# Env files
+.env
+.env.*
+
+# Wrangler
+.wrangler/
+.dev.vars*

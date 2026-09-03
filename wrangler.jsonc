@@ -1,0 +1,31 @@
+/**
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ *
+ * Path-based project. Routes attach to the existing kweinstock.dev /
+ * testing.kweinstock.dev records owned by the landing-page Worker, so there is
+ * no new DNS record or certificate to create. The most specific route wins, so
+ * "/ant-farm/*" comes here and everything else falls through to the landing page.
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ant-farm",
+  "compatibility_date": "2026-08-31",
+  "assets": {
+    "directory": "./dist",
+    // SPA fallback within the prefix. Drop to "404-page" (and add a 404.html)
+    // for a multi-page static site instead.
+    "not_found_handling": "single-page-application"
+  },
+  "observability": { "enabled": true },
+  "routes": [
+    { "pattern": "kweinstock.dev/ant-farm/*", "zone_name": "kweinstock.dev" }
+  ],
+  "env": {
+    "testing": {
+      "name": "ant-farm-testing",
+      "routes": [
+        { "pattern": "testing.kweinstock.dev/ant-farm/*", "zone_name": "kweinstock.dev" }
+      ]
+    }
+  }
+}
