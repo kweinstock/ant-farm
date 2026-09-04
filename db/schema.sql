@@ -1,0 +1,16 @@
+-- D1 (SQLite) schema. Home for HISTORY and CROSS-VISITOR queries only.
+-- The live simulation lives in Durable Object storage, never here.
+-- Apply with:  npx wrangler d1 migrations apply ant-farm
+-- See db/migrations/0001_init.sql for the actual DDL; keep this file as the
+-- current-shape reference.
+--
+-- colony_snapshot(id=1, seq, sim_time, blob, updated_at)      -- optional public mirror for cold loads
+-- ant(id TEXT PK, name, lineage_id, caste, job, born_at, died_at, death_cause, traits_json)
+-- lineage(id TEXT PK, surname, founded_at, founder_ant_id, extinct_at)
+-- lineage_edge(parent_ant_id, child_ant_id, PRIMARY KEY(parent_ant_id, child_ant_id))
+-- pin(visitor_id, ant_id, created_at, PRIMARY KEY(visitor_id, ant_id))
+-- event_log(id INTEGER PK, kind, sim_time, payload_json)      -- births, deaths, weather, predator strikes
+-- visitor_action(id INTEGER PK, visitor_id, kind, amount, sim_time, created_at)  -- audit + rate-limit backstop
+--
+-- Indexes: ant(died_at) for the living list, ant(lineage_id), lineage_edge(child_ant_id),
+-- pin(ant_id) for the most-pinned leaderboard, event_log(kind, sim_time).

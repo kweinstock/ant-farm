@@ -1,0 +1,2 @@
+-- Optional: insert the founding queen + her lineage row so a fresh deploy has a
+-- named dynasty from tick 0. Not required — createInitialState() can do it in-sim.

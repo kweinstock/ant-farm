@@ -1,0 +1,2 @@
+-- First migration. Create the tables + indexes described in db/schema.sql.
+-- (DDL to be written when implementation starts — this scaffold is comments only.)
