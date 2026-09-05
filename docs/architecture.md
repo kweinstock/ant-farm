@@ -105,11 +105,12 @@ ant-farm/
 │   │   ├── serialize.ts        # compact encode/decode for DO storage
 │   │   ├── params.ts           # every balance constant, separated from logic
 │   │   ├── world/
-│   │   │   ├── grid.ts         # tile arrays: soil / tunnel / chamber / surface / wall / exit
-│   │   │   ├── nest.ts         # chambers + roles: nursery / granary / throne / midden
-│   │   │   ├── surface.ts      # above-ground strip, the single exit, resource spawns
-│   │   │   ├── resources.ts    # food piles + water pools; decay, evaporation, stores
+│   │   │   ├── grid.ts         # NEST tiles, a vertical cross-section: soil / tunnel / chamber / wall / exit
+│   │   │   ├── nest.ts         # chambers + roles: QUEEN / NURSERY / FOOD_STORE / COMMONS / EXIT; tunnel graph; BFS distance fields
+│   │   │   ├── surface.ts      # top-down surface: exit hole, random food-pile spawns, graveyard zone
+│   │   │   ├── resources.ts    # food piles (surface) + FOOD_STORE totals; spawn, decay, pickup
 │   │   │   └── spatial-hash.ts # neighbor lookup so thousands of ants stays O(n)
+│   │   ├── corpses.ts          # corpse entities (2/tile, decay) + undertaker assignment (proportional + proximity)
 │   │   ├── pheromones.ts       # trail / alarm / recruit layers: deposit, diffuse, evaporate
 │   │   ├── ants/
 │   │   │   ├── ant.ts          # the Ant record + factory
@@ -117,8 +118,8 @@ ant-farm/
 │   │   │   ├── behavior.ts     # ordered condition->action rule engine
 │   │   │   ├── jobs.ts         # per-job actions + age->job assignment (temporal polyethism)
 │   │   │   ├── memory.ts       # per-ant learning: food sites, path success, danger spots
-│   │   │   ├── lifecycle.ts    # aging, energy, starvation, death, reassignment
-│   │   │   └── movement.ts     # step / follow-gradient / collision / speed
+│   │   │   ├── lifecycle.ts    # aging, energy, starvation, death (spawns a corpse), reassignment
+│   │   │   └── movement.ts     # goal = a chamber; BFS distance-field descent; wander is the fallback
 │   │   ├── colony/
 │   │   │   ├── queen.ts        # laying rate vs food/temp/season; stored sperm; haplodiploidy
 │   │   │   ├── brood.ts        # egg->larva->pupa->adult; nurse feeding; temp/humidity
@@ -138,9 +139,9 @@ ant-farm/
 │   │   │   ├── weather.ts      # seeded Markov weather + forecast
 │   │   │   ├── temperature.ts  # base(season, timeOfDay) ± weather ± depth
 │   │   │   └── hazards.ts      # predator / flooding / cold snap / disease — visitor-proof
-│   │   ├── foraging.ts         # exit trips: travel, pickup, return, death roll
+│   │   ├── foraging.ts         # cross-view trip: exit -> surface search -> pickup -> return -> deliver to FOOD_STORE/queen
 │   │   ├── inputs.ts           # apply the ONLY allowed visitor actions (food, water)
-│   │   └── events.ts           # Birth / Death / LineageExtinct / QueenDied / …
+│   │   └── events.ts           # Birth / Death / CorpseInterred / LineageExtinct / QueenDied / …
 │   │
 │   ├── worker/                 # the deployed backend (runs in the same Worker)
 │   │   ├── index.ts            # fetch + scheduled handlers; DO resolution; asset passthrough
@@ -172,16 +173,17 @@ ant-farm/
 │   │   │   ├── selectors.ts    # derive visible ants, pinned ants, HUD values
 │   │   │   └── interpolate.ts  # smooth ant motion between server ticks
 │   │   ├── render/
-│   │   │   ├── engine.ts       # rAF loop, camera, layer compositing
-│   │   │   ├── nest-view.ts    # side-cutaway of tunnels + chambers + brood
-│   │   │   ├── surface-view.ts # exit, foragers, dropped food/water, predator
-│   │   │   ├── ants.ts         # draw ants by caste/job, carry state, death fade, pin ring
-│   │   │   ├── pheromone-layer.ts # optional heat-map toggle
+│   │   │   ├── engine.ts       # rAF loop; drives BOTH canvases (nest + surface)
+│   │   │   ├── nest-view.ts    # the "ant farm between glass" side cutaway: chambers, tunnels, brood, stored food
+│   │   │   ├── surface-view.ts # top-down: exit hole, foragers, spawned food piles, graveyard pile
+│   │   │   ├── ants.ts         # draw ants by caste/job, carry state (egg/food/corpse), death fade, pin ring
+│   │   │   ├── pheromone-layer.ts # optional heat-map toggle (surface)
 │   │   │   ├── weather-fx.ts   # rain / snow / puddles / heat shimmer
 │   │   │   ├── daynight.ts     # color grade by TimeOfDay
 │   │   │   ├── season-fx.ts    # palette + surface dressing by Season
 │   │   │   └── sprites/atlas.ts # sprite-sheet loader + atlas coords
 │   │   ├── ui/
+│   │   │   ├── view-switch.ts  # farm view + surface view side-by-side / stacked; toggle on narrow screens
 │   │   │   ├── toolbar.ts      # Add food / Add water / Inspect tools
 │   │   │   ├── water-meter.ts  # tracked water level + this visitor's daily allowance
 │   │   │   ├── ant-list.ts     # scrollable list of living ants

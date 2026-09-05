@@ -1,11 +1,20 @@
-// Per-job action implementations + the age->job assignment ("temporal
-// polyethism"): young adults do NURSE / NEST_WORKER / BUILDER inside; older
-// adults become FORAGER / SOLDIER / UNDERTAKER outside. Reassignment also
-// responds to colony need (lots of brood -> more nurses; corpses piling up ->
-// more undertakers) so the workforce self-balances.
+// Per-job action implementations + job assignment.
 //
-// Actions: forage (delegates to foraging.ts), nurseBrood, buildTunnel,
-// repairChamber, defend, haulCorpseToMidden, tendGranary.
+// Assignment: mostly age-based ("temporal polyethism") — young = NURSE,
+// older = FORAGER. Two exceptions that respond to colony need instead of age:
+//   - NURSE stays capped at 3 eggs each (Phase 3a).
+//   - UNDERTAKER is handed out dynamically each tick, proportional to corpse
+//     count and weighted by proximity — see src/sim/corpses.ts (Phase 3c).
+//
+// Actions (Phase 3a+ each resolve to "carry X" / "go to chamber Y", turned into
+// a step by ants/movement.ts):
+//   forage   — EXIT -> surface -> pile -> carry back -> deposit in FOOD_STORE / to queen
+//   nurse    — carry egg from QUEEN chamber to NURSERY, place (3/tile), then tend
+//   undertak — carry nearest corpse to EXIT -> graveyard, then revert job
+//   eat      — go to FOOD_STORE, eat from stores
+//   idle     — mill in COMMONS
+//
+// Phase 3 (current) is the trimmed version: no chambers yet, wander + eat + tend.
 
 import type { Ant, Job } from "./ant";
 import { MAX_ENERGY } from "./ant";

@@ -4,6 +4,7 @@
 //   Death            {antId, name, cause, ageTicks, simTime}
 //   LineageExtinct   {lineageId, surname, foundedAt, endedAt}
 //   QueenDied        {antId, simTime}   -> colony is now in decline unless a new queen matures
+//   CorpseInterred   {corpseId, antId, simTime}   -> an undertaker got a body to the graveyard
 //   ForageSuccess    {antId, amount, resourcePos}
 //   PredatorStrike   {antIds, simTime}
 //   WeatherChanged   {from, to, simTime}

@@ -4,8 +4,13 @@ Incremental plan. Each phase ends with something you can **run and test**. The
 file tree in `architecture.md` is a reference map — create real files only as a
 phase needs them, and ignore (or delete) stubs you haven't reached.
 
-Cloudflare is not involved until **Phase 6**. Phases 1–5 run with `npm test` and
-`npm run dev` alone.
+Cloudflare is not involved until **Phase 6**. Everything up to and including
+Phase 5 (Phases 3a–3c included) runs with `npm test` and `npm run dev` alone.
+
+> **3a–3c were inserted after Phase 3 was built.** They turn the flat top-down
+> board into a real ant farm: a side-on cutaway nest with rooms, a separate
+> top-down surface for foraging, and corpse handling. Phase numbers 4+ are
+> unchanged so existing code comments that reference them still line up.
 
 ---
 
@@ -74,20 +79,164 @@ that's fine at this stage.
 
 ---
 
-## Phase 4 — pheromones + foraging
+## Phase 3a — the nest: rooms and room-aware movement
 
-- `src/sim/pheromones.ts` — trail layer: deposit, diffuse, evaporate.
-- `src/sim/world/surface.ts` — the single exit tile.
-- `src/sim/foraging.ts` — leave, find food, carry back, lay trail, death roll.
-- `src/sim/ants/memory.ts` — remembered food sites.
-- `src/web/render/pheromone-layer.ts` — heat-map toggle.
+Replace Phase 3's flat open board with a **dug-out nest of connected rooms**.
+Still one top-down view (the side-on / two-screen split is 3b) — this phase is
+only about structure and getting ants to navigate it on purpose instead of by
+random walk.
+
+- `src/sim/world/grid.ts` — real tile types: `SOIL` (undug), `TUNNEL`,
+  `CHAMBER`, `WALL`, `EXIT`. `isPassable` = tunnel / chamber / exit.
+- `src/sim/world/nest.ts` — the chamber system:
+  - `ChamberRole`: `QUEEN`, `NURSERY`, `FOOD_STORE`, `COMMONS` (the "room to
+    move around in" / crossroads), and the `EXIT` shaft.
+  - Each chamber = a group of `CHAMBER` tiles tagged with a role, joined by
+    `TUNNEL` runs.
+  - `createStarterNest()` — digs one fixed layout: queen chamber deep, nursery
+    next to it, food store + commons off a central tunnel, a shaft up to the
+    exit.
+  - Queries: `chamberAt(pos)`, `tilesOf(role)`, `nearestTileOf(role, pos)`, and
+    a chamber-to-chamber adjacency graph for pathing.
+- `src/sim/ants/movement.ts` — extend from pure wander to **goal-directed**:
+  build a BFS distance field over passable tiles from a target chamber (cache
+  one per role; the nest is static for now), and each tick step to the
+  lowest-distance neighbour, with a little noise so ants don't form a rigid
+  conga line. Wander stays as the no-goal fallback.
+- `src/sim/ants/behavior.ts` / `jobs.ts` — every job now resolves to a
+  **destination chamber**: queen stays in `QUEEN`; nurse ferries eggs from
+  `QUEEN` to `NURSERY`; forager heads for `EXIT`; a hungry ant heads for
+  `FOOD_STORE`; idle ants mill in `COMMONS`.
+- `src/sim/colony/brood.ts` — eggs are laid in the `QUEEN` chamber and do **not
+  progress until a nurse has physically carried each one to the `NURSERY`**.
+  - **A nurse can hold/tend at most 3 eggs at once.**
+  - **A nursery tile holds at most 3 eggs** — a nurse carrying an egg looks for
+    a tile with a free slot.
+- `src/sim/state.ts` — `createInitialState` calls `createStarterNest`; starter
+  ants spawn in `COMMONS`; brood is carried, never teleported.
+- The `MAX_BROOD` cap from Phase 3 can now come out — nursery-tile capacity plus
+  the 3-per-nurse limit are the real ceiling.
+
+**Test (`test/sim/`):**
+- `nest.test.ts` — the starter nest is fully connected (every chamber reachable
+  from every other over passable tiles); every role's distance field covers all
+  passable tiles (no unreachable pockets).
+- an egg laid in the queen chamber reaches the nursery within N ticks, and no
+  nursery tile ever holds more than 3 eggs, and no nurse tends more than 3.
+- determinism still holds (`step(state, N)` == N × `step(state, 1)`).
+
+**Run it:** top-down still, but now you see rooms — the queen in her chamber, a
+nursery filling with eggs, ants threading the tunnels between rooms to reach
+their jobs.
+
+---
+
+## Phase 3b — two views: the farm (side-on) and the surface (top-down)
+
+Split into **two coordinate spaces and two renders**: the nest is a vertical
+cross-section (like looking at an ant farm between glass); the surface is a
+separate top-down plane. The exit shaft's top tile is the seam between them.
+
+- `src/sim/state.ts` — every mobile thing (ant, later corpse, carried food) gets
+  a `location: { where: "nest" | "surface"; pos }`. Nest `pos` is
+  `(x across, y = depth)`; surface `pos` is top-down `(x, y)`.
+- `src/sim/world/surface.ts` — the top-down surface: the exit hole at a fixed
+  point, an open area where **food piles spawn at random positions over time**
+  (this replaces Phase 3's fixed piles), and an empty patch reserved just
+  outside the hole for the graveyard (filled in 3c).
+- `src/sim/index.ts` — tick order gains a **surface pass** after the nest pass:
+  ants standing on the surface move / search in surface coords; an ant that
+  reaches the exit tile flips `location.where` and is placed at the matching
+  tile in the other space.
+- `src/sim/foraging.ts` — the minimal round trip (no trails yet, that's Phase
+  4): forager walks to the exit → onto the surface → wanders to the nearest
+  food pile → picks up a load → walks back through the exit → **delivers to the
+  `FOOD_STORE` chamber (or straight to the queen)**, then repeats.
+- `src/web/render/nest-view.ts` — the cutaway: chambers as excavated pockets in
+  a soil fill, tunnels as thin channels, the exit shaft rising to a surface line
+  at the top; ants / eggs / stored food drawn inside their rooms.
+- `src/web/render/surface-view.ts` — top-down: the hole, foragers walking the
+  ground, the randomly-spawned food piles.
+- `src/web/render/engine.ts` — drive both canvases.
+- `src/web/ui/view-switch.ts` — side-by-side (or stacked) by default so you see
+  the ant leave one and appear in the other; a toggle for narrow screens.
+  `config.ts` gets the default layout.
+- `src/web/render/grid.ts` + `render/resources.ts` — retired / folded into the
+  two new views.
 
 **Test:**
-- trail forms toward a food pile and decays after it's gone (assert pheromone
-  totals over time).
+- an ant told to forage walks to the exit, its `location.where` flips to
+  `"surface"`, it reaches a pile, flips back to `"nest"` on return, and the
+  `FOOD_STORE` total goes up.
+- determinism holds across the transition.
+- food piles keep spawning on the surface and are consumed — the surface never
+  runs permanently empty or fills without bound.
+
+**Run it:** two panels — the cutaway colony and the foraging ground — with an ant
+visibly leaving the nest through the hole and popping up top-side.
+
+---
+
+## Phase 3c — corpses and the undertaker
+
+- `src/sim/corpses.ts` (new) — a dead ant no longer just disappears. It becomes
+  a **corpse** at its death spot: `{ id, location, ageTicks }`. Corpses are
+  **small — 2 per tile** — and decay away after a long time even if never moved,
+  so a stalled colony can't leak memory.
+- `src/sim/world/surface.ts` — the **graveyard** zone just outside the hole
+  accumulates hauled-out corpses into a visible, growing pile.
+- `src/sim/corpses.ts` — undertaker assignment, recomputed every tick:
+  - **It is a dynamic job, not an age band.** No corpses → zero undertakers.
+  - `desiredUndertakers ≈ round(corpseCount × UNDERTAKER_PER_CORPSE)`, clamped to
+    a fraction of the workforce so the colony never drops everything to bury the
+    dead.
+  - **Proximity-weighted pick:** among available workers, the ones whose nearest
+    corpse is closest are the ones tasked — an ant next to a body is far more
+    likely to be assigned it than one across the nest.
+- `src/sim/ants/jobs.ts` — the `UNDERTAKER` job: pick up the nearest corpse,
+  carry it to the `EXIT`, out onto the surface, drop it in the graveyard, then
+  revert to the job it had before.
+- `src/sim/ants/lifecycle.ts` — on death, emit the corpse instead of only a
+  `Death` event.
+- `src/web/render/*` — corpses drawn small and grey in whichever view they're
+  in; the graveyard pile on the surface view.
+
+**Test:**
+- kill several ants in a chamber → within N ticks every corpse is in the
+  graveyard, and the count of ants that took `UNDERTAKER` was roughly
+  `corpseCount × UNDERTAKER_PER_CORPSE`.
+- zero corpses → zero undertakers, every tick.
+- across many seeds, an ant adjacent to a corpse is assigned it noticeably more
+  often than a distant ant (statistical check).
+- corpses that are never reached still decay and disappear eventually.
+
+**Run it:** trigger a die-off — bodies get carried out through the hole and
+stacked in the graveyard, and the colony visibly puts more workers on corpse
+duty when the pile is bigger.
+
+---
+
+## Phase 4 — pheromones + foraging
+
+The surface, the exit transition, random food spawns, and basic delivery already
+exist from 3b. This phase adds the **intelligence and feedback loops** on top.
+
+- `src/sim/pheromones.ts` — trail layer (on the surface, optionally in tunnels):
+  deposit on the way *back* carrying food, follow the gradient on the way *out*,
+  evaporate over time.
+- `src/sim/foraging.ts` — upgrade the 3b round trip: bias the outbound search
+  toward trails and remembered sites instead of pure wander; add the on-surface
+  death roll (raised later by weather / predators in Phase 5).
+- `src/sim/ants/memory.ts` — remembered food-pile locations, per-route success.
+- `src/web/render/pheromone-layer.ts` — heat-map toggle on the surface view.
+
+**Test:**
+- trail forms toward a surface food pile and decays after it's exhausted (assert
+  pheromone totals over time).
 - `learning.test.ts` — deaths per forage trip trend down over generations.
 
-**Run it:** watch trails form and collapse in the browser.
+**Run it:** trails forming and collapsing on the foraging ground; the food store
+filling faster as recruitment kicks in.
 
 ---
 
