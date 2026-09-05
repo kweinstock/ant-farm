@@ -1,56 +1,64 @@
 // Not part of the test suite — a scratch script to *watch* the sim, run via
 // `npm run test:basic` (tsx, no build step). Safe to keep hacking on this
 // file directly; nothing else imports it.
+//
+// Phase 3: the per-tick ASCII grid stopped making sense once there are
+// dozens of ants on a 10x10 board — a redrawn grid can show one ant's
+// position but not a colony's. Replaced with a periodic demography summary
+// instead; individual birth/death events still print immediately since
+// those are milestones worth seeing as they happen, not just folded into
+// the next summary line.
 import { createInitialState } from "../src/sim/state";
 import { step } from "../src/sim";
+import { getDemography } from "../src/sim/colony/demography";
 
 const seed = 12345;
-const MAX_TICKS = 1001;
+
+// Raised from Phase 2's 1001 — that was sized for watching one ant's single
+// lifespan (500-1000 ticks). Population growth via egg -> larva -> pupa ->
+// adult (colony/brood.ts's stage durations) needs more runway than that to
+// show anything interesting happening.
+const MAX_TICKS = 20000;
+
+const SUMMARY_INTERVAL_TICKS = 200;
 
 let state = createInitialState(seed);
 
+console.log(`Seed: ${seed}`);
+console.log();
+
 for (let tick = 1; tick <= MAX_TICKS; tick++) {
-  const result = step(state, 1);
-  state = result.state;
+    const result = step(state, 1);
+    state = result.state;
 
-  console.clear();
-
-  console.log(`Tick: ${tick}`);
-
-  if (state.ant === null) {
-    console.log("Ant: DEAD");
-  } else {
-    console.log(`Age: ${state.ant.ageTicks}`);
-    console.log(`Energy: ${state.ant.energy}`);
-    console.log(`Position: (${state.ant.position.x}, ${state.ant.position.y})`);
-  }
-
-  console.log();
-
-  // Print the grid
-  for (let y = 0; y < state.grid.height; y++) {
-    let row = "";
-
-    for (let x = 0; x < state.grid.width; x++) {
-      if (
-        state.ant !== null &&
-        state.ant.position.x === x &&
-        state.ant.position.y === y
-      ) {
-        row += "@";
-      } else {
-        row += ".";
-      }
+    for (const event of result.events) {
+        if (event.kind === "birth") {
+            console.log(`  [tick ${tick}] birth: ${event.antId}`);
+        } else if (event.kind === "death" && event.antId === state.queenId) {
+            // state.queenId still points at her id even after she's removed
+            // from state.ants — this only tells us it WAS her id, not that
+            // she's currently alive, which is exactly the comparison we want
+            // here (there's no colony/caste.ts succession yet, so this is
+            // effectively "the colony just lost its only queen").
+            console.log(`  [tick ${tick}] QUEEN DIED (age ${event.ageTicks})`);
+        }
     }
 
-    console.log(row);
-  }
+    if (tick % SUMMARY_INTERVAL_TICKS === 0 || state.ants.size === 0) {
+        const demography = getDemography(state);
 
-  if (state.ant === null) {
-    console.log();
-    console.log(`Died at tick ${tick}`);
-    break;
-  }
+        console.log(
+            `Tick ${tick.toString().padStart(5)} | pop ${demography.population
+                .toString()
+                .padStart(3)} (nurses ${demography.nurses}, foragers ${demography.foragers}) | brood ${demography.broodCount}`
+        );
+    }
 
-  await new Promise((resolve) => setTimeout(resolve, 50));
+    if (state.ants.size === 0) {
+        console.log();
+        console.log(`Colony extinct at tick ${tick}`);
+        break;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 0.1));
 }

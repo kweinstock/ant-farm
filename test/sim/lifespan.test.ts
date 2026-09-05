@@ -1,34 +1,50 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  createInitialState,
-  MAX_LIFESPAN_TICKS,
-  MIN_LIFESPAN_TICKS,
+    createInitialState,
+    MAX_LIFESPAN_TICKS,
+    MIN_LIFESPAN_TICKS,
 } from "../../src/sim/state";
 import { step } from "../../src/sim";
 
 describe("ant lifespan", () => {
-  it("eventually kills the ant exactly once, within the configured lifespan range", () => {
-    const state = createInitialState(12345);
+    it("eventually kills a specific ant, within the configured lifespan range", () => {
+        const initialState = createInitialState(12345);
 
-    // 2000 comfortably clears MAX_LIFESPAN_TICKS (1000 in state.ts) so the
-    // ant is guaranteed dead by the end, however the RNG rolled its lifespan.
-    const result = step(state, 2000);
+        // A starter worker, not the queen — the queen now outlives every test
+        // run (QUEEN_MIN_LIFESPAN_TICKS is past 10k). A worker still can't
+        // dodge death past MAX_LIFESPAN_TICKS: the age check fires at <= 1000,
+        // and pure starvation would take STARTING_ENERGY (1500) ticks anyway,
+        // so age always wins first and the death is guaranteed lifespan-driven
+        // and inside [MIN, MAX].
+        const firstWorker = [...initialState.ants.values()].find(
+            (ant) => ant.caste === "WORKER"
+        );
+        if (!firstWorker) {
+            throw new Error("expected createInitialState to seed a starter worker");
+        }
+        const trackedAntId = firstWorker.id;
 
-    const deathEvents = result.events.filter(
-      (event) => event.kind === "death"
-    );
+        // 1200 comfortably clears MAX_LIFESPAN_TICKS (1000) so the tracked
+        // ant is guaranteed dead by the end, however the RNG rolled its
+        // lifespan.
+        const result = step(initialState, 1200);
 
-    expect(result.state.ant).toBeNull();
+        expect(result.state.ants.has(trackedAntId)).toBe(false);
 
-    expect(deathEvents).toHaveLength(1);
+        // Not toHaveLength(1) anymore — other ants in the colony can die
+        // over 2000 ticks too now, so this only asserts the tracked ant's
+        // death is present, not that it's the only one.
+        const trackedDeathEvent = result.events.find(
+            (event) => event.kind === "death" && event.antId === trackedAntId
+        );
 
-    const deathEvent = deathEvents[0];
+        expect(trackedDeathEvent).toBeDefined();
 
-    // Ties this test to the actual roll range instead of just ">0" — catches
-    // an off-by-one in the death check (e.g. `>` vs `>=` against
-    // lifespanTicks) that ">0" alone would miss.
-    expect(deathEvent.ageTicks).toBeGreaterThanOrEqual(MIN_LIFESPAN_TICKS);
-    expect(deathEvent.ageTicks).toBeLessThanOrEqual(MAX_LIFESPAN_TICKS);
-  });
+        // Ties this test to the actual roll range instead of just ">0" —
+        // catches an off-by-one in the death check (e.g. `>` vs `>=` against
+        // lifespanTicks) that ">0" alone would miss.
+        expect(trackedDeathEvent?.ageTicks).toBeGreaterThanOrEqual(MIN_LIFESPAN_TICKS);
+        expect(trackedDeathEvent?.ageTicks).toBeLessThanOrEqual(MAX_LIFESPAN_TICKS);
+    });
 });

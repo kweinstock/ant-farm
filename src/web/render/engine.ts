@@ -9,7 +9,9 @@
 import type { ColonyState } from "../../sim/state";
 import { CELL_SIZE } from "../config";
 import { renderGrid } from "./grid";
-import { renderAnt } from "./ants";
+import { renderResources } from "./resources";
+import { renderBrood } from "./brood";
+import { renderAnts } from "./ants";
 
 export function startRenderLoop(canvas: HTMLCanvasElement, getState: () => ColonyState,): void {
   const context = canvas.getContext("2d");
@@ -34,8 +36,12 @@ export function startRenderLoop(canvas: HTMLCanvasElement, getState: () => Colon
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+    // Painter's order, back to front: board, then food, then brood, then
+    // ants on top (an ant standing on food/brood should be visible).
     renderGrid(ctx, state.grid);
-    renderAnt(ctx, state.ant);
+    renderResources(ctx, state);
+    renderBrood(ctx, state);
+    renderAnts(ctx, state);
 
     requestAnimationFrame(render);
   }
