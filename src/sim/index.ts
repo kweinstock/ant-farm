@@ -15,34 +15,28 @@
 //   1. apply queued visitor inputs        (inputs.ts)
 //   2. advance environment                (environment/*)  clock, season, weather, temperature, hazards
 //   3. pheromone diffuse + evaporate      (pheromones.ts)
-//   4. per-ant sense -> decide -> act     (ants/*)          movement, foraging, brood care, building, defense
+//   4. sense -> decide -> move-toward-chamber / act-in-chamber (ants/*)
 //   5. colony processes                   (colony/*)        queen laying, brood development, caste fate, nuptial flights
 //   6. lifecycle resolution               (ants/lifecycle.ts) aging, starvation, death, job reassignment
 //   7. genetics + lineage bookkeeping     (genetics/*)      offspring traits, family-tree edges, extinction marks
 //   8. collect + return events
 //
-// PHASE 3 NOTE: steps 1-3 and 7 still don't exist (no inputs, environment,
-// pheromones, or genetics yet). Steps 4 and 6 are combined into one per-worker
-// loop below rather than run as two separate passes — see ants/lifecycle.ts's
-// file-level comment for exactly why that's safe for now and what breaks the
-// equivalence later (Phase 5 hazards needing a completed pass before
-// resolving deaths). The queen is NOT part of that per-ant loop; she's
-// stationary and handled entirely by colony/queen.ts's tickQueen, called as
-// part of step 5.
+// PHASE 3a NOTE: steps 1-3 and 7 still don't exist. Steps 4 and 6 stay
+// combined into one per-worker loop below, for the same reason as before
+// (see ants/lifecycle.ts) — nothing yet needs a completed pass over all ants
+// before resolving deaths. The queen is still not part of that loop; she's
+// handled entirely by colony/queen.ts's tickQueen, as part of step 5.
 import { ageAndMeter } from "./ants/lifecycle";
 import { perceive } from "./ants/senses";
 import { decide } from "./ants/behavior";
 import { act } from "./ants/jobs";
 import { tickQueen } from "./colony/queen";
 import { advanceBrood } from "./colony/brood";
-import { regrowFoodPiles } from "./world/resources";
+import { regenFoodStore } from "./world/resources";
 import type { ColonyState } from "./state";
 import type { AntId } from "./ants/ant";
 
 
-// PHASE 1 NOTE retired: DeathEvent now carries antId since there's more than
-// one ant that can die. BirthEvent is new — the first event this sim can
-// emit that represents growth rather than loss.
 export type DeathEvent = {
     kind: "death";
     antId: AntId;
@@ -53,30 +47,21 @@ export type BirthEvent = {
     kind: "birth";
     antId: AntId;
     ageTicks: number;
-}
+};
 
-export type SimEvent = DeathEvent | BirthEvent
+export type SimEvent = DeathEvent | BirthEvent;
 
 type TickResult = {
     state: ColonyState;
     events: SimEvent[];
 };
 
-// Advances exactly ONE tick. `step()` below is just a loop over this — that
-// split is what makes "one call with dtTicks=50" and "fifty calls with
-// dtTicks=1" produce identical results.
 function singleTick(state: ColonyState): TickResult {
     const events: SimEvent[] = [];
 
-    // Sorted explicitly by id, not raw Map iteration order. Map insertion
-    // order happens to be deterministic too, but sorting is what the
-    // determinism contract actually calls for — it means swapping state.ants
-    // for a different collection type later can't silently change which ant
-    // acts first, which matters because rngSeed is threaded sequentially
-    // across ants within this loop.
     const workers = Array.from(state.ants.values())
-    .filter((ant) => ant.caste === "WORKER")
-    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+        .filter((ant) => ant.caste === "WORKER")
+        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
     let currentState: ColonyState = state
 
@@ -107,22 +92,14 @@ function singleTick(state: ColonyState): TickResult {
         currentState = {
             ...currentState,
             ants: nextAnts,
-            resources: actResult.resources,
             brood: actResult.brood,
+            foodStore: actResult.foodStore,
             rngSeed: actResult.rngSeed,
         };
     }
 
     // Colony processes: queen laying, then brood development. Order matters
-    // here — advanceBrood should see any egg the queen just laid this tick
-    // reflected in currentState.brood, so tickQueen runs first.
-    //
-    // Guard on the queen still being present: once a prior tick removed her
-    // from state.ants and emitted her death, this block must be skipped
-    // entirely. There's no succession yet (colony/caste.ts), so a queenless
-    // colony just stops laying and lives out its remaining workers. Without
-    // this guard, tickQueen returns an undefined `queen` every subsequent
-    // tick and the `queenResult.queen.ageTicks` read below crashes.
+    // — advanceBrood should see any egg the queen just laid this tick.
     if (currentState.ants.has(currentState.queenId)) {
         const broodCountBeforeQueen = currentState.brood.length;
         const queenResult = tickQueen(currentState);
@@ -150,6 +127,9 @@ function singleTick(state: ColonyState): TickResult {
         };
     }
 
+    // advanceBrood's placement logic is unchanged — it just does less now
+    // (no tendedThisTick gate), since brood.ts moved the real bottleneck to
+    // whether an egg has been physically carried into the NURSERY.
     const broodResult = advanceBrood(currentState);
 
     const nextAntsAfterBrood = new Map(currentState.ants);
@@ -166,18 +146,18 @@ function singleTick(state: ColonyState): TickResult {
         rngSeed: broodResult.rngSeed,
     };
 
-    // Doesn't belong in environment/* yet — that module doesn't exist until
-    // Phase 5 (seasons/weather scaling regrowth rates). Called directly here
-    // for now; move this call once there's an environment step to fold it
-    // into instead.
-    const resources = regrowFoodPiles(currentState.resources);
+    // Passive regen placeholder, replacing Phase 3's per-pile
+    // regrowFoodPiles — still doesn't belong in environment/* until seasons
+    // exist to scale it, still called directly here for the same reason as
+    // before.
+    const foodStore = regenFoodStore(currentState.foodStore);
 
     return {
         state: {
             ...currentState,
             seq: currentState.seq + 1,
             simTime: currentState.simTime + 1,
-            resources,
+            foodStore,
         },
         events,
     };

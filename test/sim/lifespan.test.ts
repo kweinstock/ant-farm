@@ -1,22 +1,19 @@
 import { describe, expect, it } from "vitest";
 
-import {
-    createInitialState,
-    MAX_LIFESPAN_TICKS,
-    MIN_LIFESPAN_TICKS,
-} from "../../src/sim/state";
+import { createInitialState } from "../../src/sim/state";
+import { MAX_LIFESPAN_TICKS, MIN_LIFESPAN_TICKS } from "../../src/sim/ants/ant";
 import { step } from "../../src/sim";
 
 describe("ant lifespan", () => {
     it("eventually kills a specific ant, within the configured lifespan range", () => {
         const initialState = createInitialState(12345);
 
-        // A starter worker, not the queen — the queen now outlives every test
-        // run (QUEEN_MIN_LIFESPAN_TICKS is past 10k). A worker still can't
-        // dodge death past MAX_LIFESPAN_TICKS: the age check fires at <= 1000,
-        // and pure starvation would take STARTING_ENERGY (1500) ticks anyway,
-        // so age always wins first and the death is guaranteed lifespan-driven
-        // and inside [MIN, MAX].
+        // A starter worker, not the queen — she's mortal (4000-7000) but that's
+        // longer than this 1200-tick run. A worker can't dodge death past
+        // MAX_LIFESPAN_TICKS: the age check fires at <= 1000, and pure
+        // starvation would take STARTING_ENERGY (1500) ticks anyway, so age
+        // always wins first and the death is guaranteed lifespan-driven and
+        // inside [MIN, MAX].
         const firstWorker = [...initialState.ants.values()].find(
             (ant) => ant.caste === "WORKER"
         );

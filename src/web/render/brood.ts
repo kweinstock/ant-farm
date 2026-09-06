@@ -1,12 +1,16 @@
-// Draws the brood pile. Phase 3: every egg/larva/pupa sits on the queen's
-// single tile (colony/brood.ts's layEgg uses queen.position, and the queen
-// never moves), so this renders them as a tight cluster of little dots on
-// that one cell — which is also the visual answer to "why is tending so
-// unreliable": one nurse randomly wandering a 10x10 grid is rarely on the
-// exact tile the whole nursery is stacked on.
+// Phase 3a: brood no longer all sits on the queen's one tile — eggs get laid
+// in QUEEN, carried through tunnels, and placed in NURSERY, so entry.position
+// now varies meaningfully. This groups brood by their actual tile and spirals
+// each group independently within that tile, instead of one global spiral
+// anchored on the queen.
 //
-// Dots are colored by stage and placed on a deterministic spiral so the pile
-// looks stable frame-to-frame rather than shimmering.
+// Entries currently being carried (carriedBy !== undefined) are skipped here
+// entirely — render/ants.ts draws a small indicator on the carrying nurse
+// instead. This avoids assuming a carried Brood's position field is kept
+// live-synced with the ant carrying it tick-by-tick; if that assumption
+// turns out to be wrong (position IS kept in sync), this filter should come
+// out and carried eggs can render at their real in-transit position too.
+import type { Brood } from "../../sim/colony/brood";
 import type { ColonyState } from "../../sim/state";
 import { CELL_SIZE } from "../config";
 
@@ -22,19 +26,37 @@ export function renderBrood(ctx: CanvasRenderingContext2D, state: ColonyState): 
     ctx.strokeStyle = "#8a6f3a";
     ctx.lineWidth = 1;
 
-    state.brood.forEach((entry, i) => {
-        // Golden-angle spiral out from the tile centre, spread wide enough
-        // that the pile rings AROUND the queen (who permanently sits on this
-        // same tile) instead of hiding entirely under her.
-        const angle = i * 2.399963;
-        const spread = DOT_RADIUS + Math.sqrt(i) * DOT_RADIUS * 1.6;
-        const cx = entry.position.x * CELL_SIZE + CELL_SIZE / 2 + Math.cos(angle) * spread;
-        const cy = entry.position.y * CELL_SIZE + CELL_SIZE / 2 + Math.sin(angle) * spread;
+    const groups = new Map<string, Brood[]>();
+    for (const entry of state.brood) {
+        if (entry.carriedBy !== undefined) {
+            continue;
+        }
+        const key = `${entry.position.x},${entry.position.y}`;
+        const group = groups.get(key);
+        if (group) {
+            group.push(entry);
+        } else {
+            groups.set(key, [entry]);
+        }
+    }
 
-        ctx.fillStyle = STAGE_COLOR[entry.stage] ?? "#fbf1d0";
-        ctx.beginPath();
-        ctx.arc(cx, cy, DOT_RADIUS, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-    });
+    for (const group of groups.values()) {
+        const tileX = group[0].position.x;
+        const tileY = group[0].position.y;
+        const centerX = tileX * CELL_SIZE + CELL_SIZE / 2;
+        const centerY = tileY * CELL_SIZE + CELL_SIZE / 2;
+
+        group.forEach((entry, i) => {
+            const angle = i * 2.399963;
+            const spread = i === 0 ? 0 : DOT_RADIUS + Math.sqrt(i) * DOT_RADIUS * 1.4;
+            const cx = centerX + Math.cos(angle) * spread;
+            const cy = centerY + Math.sin(angle) * spread;
+
+            ctx.fillStyle = STAGE_COLOR[entry.stage] ?? "#fbf1d0";
+            ctx.beginPath();
+            ctx.arc(cx, cy, DOT_RADIUS, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+        });
+    }
 }

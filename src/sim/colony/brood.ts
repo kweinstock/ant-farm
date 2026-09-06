@@ -1,13 +1,15 @@
-// Pre-adult pipeline: EGG -> LARVA -> PUPA -> ADULT with per-stage timers scaled
-// by chamber temperature/humidity (nurses move brood between chambers to
-// optimize — see ants/jobs.ts). Larvae must be fed by nurses or they die.
-// On eclosion, creates an Ant (ants/ant.ts) with traits from genetics/inheritance.ts
-// and a name from names/generator.ts; emits Birth.
+// Pre-adult pipeline: EGG -> LARVA -> PUPA -> ADULT. Phase 3a: position now
+// actually matters (queen chamber -> carried -> nursery tile) instead of
+// being cosmetic, and tending is gone entirely — the bottleneck is now a
+// nurse physically carrying each egg to the NURSERY, not per-tick attention
+// once it's there. No caps enforced here: the nurse-carrying cap (3) lives
+// in behavior.ts/jobs.ts, the nursery-tile cap (3) lives in jobs.ts's
+// placeEgg. This file just runs timers on whatever is currently placed.
 
-import { randomInt } from "../rng";
-import type { Ant } from "../ants/ant";
+import type { Ant, AntId } from "../ants/ant";
 import { createWorker } from "../ants/ant";
-import { ColonyState, MIN_LIFESPAN_TICKS, MAX_LIFESPAN_TICKS } from "../state";
+import type { ColonyState } from "../state";
+import { chamberAt, tilesOf } from "../world/nest";
 import type { Position } from "../world/grid";
 
 const EGG_DURATION_TICKS = 30;
@@ -23,7 +25,7 @@ export type Brood = {
     stage: BroodStage;
     progressTicks: number;
     position: Position;
-    tendedThisTick: boolean;
+    carriedBy?: AntId;
 }
 
 export function layEgg(state: ColonyState): Brood {
@@ -35,7 +37,7 @@ export function layEgg(state: ColonyState): Brood {
         stage: "EGG",
         progressTicks: 0,
         position,
-        tendedThisTick: false,
+        carriedBy: undefined,
     };
 }
 
@@ -46,28 +48,41 @@ export function advanceBrood(state: ColonyState): {brood: Brood[]; newAdults: An
     let nextAntId = state.nextAntId;
     let rngSeed = state.rngSeed;
 
-    // Falls back to (0,0) only if the queen is already gone — a degenerate,
-    // queenless colony that's winding down anyway (no new eggs, just existing
-    // brood finishing). Not worth a real "nursery tile" concept until
-    // world/nest.ts chambers exist.
-    const queen = state.ants.get(state.queenId);
-    const nurseryPosition: Position = queen ? queen.position : {x: 0, y: 0};
+    const nurseryTiles = tilesOf(state.nest, "NURSERY");
+    // Any nursery tile works as an eclosion spawn point — one physical room,
+    // not meaningfully different spots, same reasoning state.ts uses for the
+    // queen's own starting tile. Falls back to (0,0) only in the degenerate
+    // case of an empty NURSERY chamber, which the hand-authored layout never
+    // actually produces.
+    const eclosionPosition: Position = nurseryTiles[0] ?? {x: 0, y: 0}
 
     for (const entry of state.brood) {
+        const isPlaced = entry.carriedBy === undefined && chamberAt(state.nest, entry.position) === "NURSERY";
+
+        if (!isPlaced) {
+            // Still sitting uncarried in the QUEEN chamber, or currently
+            // being walked somewhere by a nurse — either way, no progress
+            // this tick. This is the actual bottleneck this phase is built
+            // around: physical placement unlocks development, not time
+            // alone.
+            remainingBrood.push(entry);
+            continue; 
+        }
+
         if (entry.stage === "EGG") {
             const progressTicks = entry.progressTicks + 1;
             remainingBrood.push(progressTicks >= EGG_DURATION_TICKS 
-                ? {...entry, stage: "LARVA", progressTicks: 0, tendedThisTick: false}
-                : {...entry, progressTicks, tendedThisTick: false}
+                ? {...entry, stage: "LARVA", progressTicks: 0}
+                : {...entry, progressTicks}
             );
             continue;
         }
 
         if (entry.stage === "LARVA") {
-            const progressTicks = entry.tendedThisTick ? entry.progressTicks + 1 : entry.progressTicks;
+            const progressTicks = entry.progressTicks + 1;
             remainingBrood.push(progressTicks >= LARVA_DURATION_TICKS
-                ? {...entry, stage: "PUPA", progressTicks: 0, tendedThisTick: false}
-                : {...entry, progressTicks, tendedThisTick: false}
+                ? {...entry, stage: "PUPA", progressTicks: 0}
+                : {...entry, progressTicks}
             );
             continue;
         }
@@ -78,12 +93,15 @@ export function advanceBrood(state: ColonyState): {brood: Brood[]; newAdults: An
         if (progressTicks >= PUPA_DURATION_TICKS) {
             const antId = `ant-${nextAntId}`;
             nextAntId += 1;
-            const lifespanResult = randomInt(rngSeed, MIN_LIFESPAN_TICKS, MAX_LIFESPAN_TICKS);
-            rngSeed = lifespanResult.seed;
 
-            newAdults.push(createWorker(antId, nurseryPosition, lifespanResult.value));
+            const newAdult = createWorker(antId, eclosionPosition, rngSeed)
+            rngSeed = newAdult.seed;            
+            newAdults.push(newAdult.ant);
+            // Not pushed to remainingBrood — this entry is gone, replaced by
+            // the adult above, which frees its nursery tile for whatever
+            // egg gets placed there next.
         } else {
-            remainingBrood.push({...entry, progressTicks, tendedThisTick:false});
+            remainingBrood.push({...entry, progressTicks});
         }
     }
 

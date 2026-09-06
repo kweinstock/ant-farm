@@ -1,37 +1,34 @@
-// Food piles and water pools: position, amount, type. Rules for decay (food
-// spoils), evaporation (water shrinks, faster in HEAT), and pickup by ants.
-// Colony-internal food stores in the GRANARY are tracked here too and feed the
-// queen's laying rate + nurse feeding.
-import type { Position } from "../world/grid";
+// Food store: a single amount/capacity pair, replacing Phase 3's scattered
+// FoodPile[] entirely — no positions, no per-pile lookups, just one number
+// the whole colony draws from and slowly refills.
 
-export const REGROW_RATE = 2;
+// PHASE 3a: generous on purpose. Each ant burns ~1 energy/tick and tops up
+// ~50 at a time from the store, so the colony draws roughly `population`
+// food/tick. This trickle needs to comfortably exceed that for a healthy
+// colony so food never becomes the 3a bottleneck (the nurse ferry is meant
+// to be). 3b deletes this entirely — foragers stock the store for real then.
+export const FOOD_STORE_REGEN = 50;
 
-export type FoodPile = {
-    position: Position;
-    amount: number;
-    capacity: number;
-}
+const EAT_AMOUNT = 50;
 
-export function findFoodAt(piles: FoodPile[], position: Position): number | undefined {
-    const index = piles.findIndex((pile) => pile.position.x === position.x && pile.position.y === position.y);
-    return index === -1 ? undefined : index;
-}
+export type FoodStore = { amount: number; capacity: number };
 
-export function eatFromPile(piles: FoodPile[], index: number, amount: number): {piles: FoodPile[]; consumed: number} {
-    const pile = piles[index];
-    const consumed = Math.min(amount, pile.amount);
-
-    const updatedPiles = piles.map((p, i) => i === index ? {...p, amount: p.amount - consumed} : p);
+export function eatFromStore(store: FoodStore): { store: FoodStore; consumed: number } {
+    const consumed = Math.min(EAT_AMOUNT, store.amount);
 
     return {
-        piles: updatedPiles,
+        store: { ...store, amount: store.amount - consumed },
         consumed,
     };
 }
 
-export function regrowFoodPiles(piles: FoodPile[]): FoodPile[] {
-    return piles.map((pile) => ({
-        ...pile,
-        amount: Math.min(pile.amount + REGROW_RATE, pile.capacity),
-    }));
+// PHASE 3a PLACEHOLDER — a flat passive trickle standing in for a real
+// economy. In 3b, foragers physically carry surface food into this chamber,
+// and this function should be DELETED at that point, not tuned down to
+// zero and left as dead code nobody calls anymore.
+export function regenFoodStore(store: FoodStore): FoodStore {
+    return {
+        ...store,
+        amount: Math.min(store.amount + FOOD_STORE_REGEN, store.capacity),
+    };
 }

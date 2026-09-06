@@ -1,43 +1,46 @@
-// Builds an ant's local perception for this tick using the spatial hash:
-// nearby tiles + their type, local pheromone readings (all 3 layers, with
-// gradient direction), visible resources, nearby kin/threats/corpses, current
-// chamber climate. Pure read of state -> a Perception struct handed to behavior.ts.
+// Builds one ant's Perception for this tick — a pure read of state, no
+// decisions made here (behavior.ts owns those). Phase 3a: dropped
+// onFoodPileIndex and nearBroodId entirely — the scattered food-pile concept
+// is gone (state.ts's single foodStore replaced it), and brood interaction
+// is chamber-gated now, not proximity-gated, so "is there a nearby brood
+// entry" stopped being the right question to ask.
 
 import type { Ant } from "./ant";
 import { MAX_ENERGY } from "./ant";
-import { getNeighbors } from "../world/grid";
-import { findFoodAt } from "../world/resources";
+import { chamberAt, type ChamberRole } from "../world/nest";
 import type { ColonyState } from "../state";
-import { BroodId } from "../colony/brood";
+import type { BroodId } from "../colony/brood";
 
 export type Perception = {
-    onFoodPileIndex: number | undefined;
-    nearBroodId: BroodId | undefined;
+    currentChamber: ChamberRole | undefined;
+    carrying: BroodId[];
     hungerRatio: number;
+    eggsAvailableInQueenChamber: boolean;
 };
 
 export function perceive(state: ColonyState, ant: Ant): Perception {
-    const onFoodPileIndex = findFoodAt(state.resources, ant.position);
+    const currentChamber = chamberAt(state.nest, ant.position);
 
-    const neighborTiles = getNeighbors(state.grid, ant.position.x, ant.position.y);
-
-    // KNOWN GAP: matches the first brood entry by position only — it does NOT
-    // check stage. Only LARVA actually benefit from tending (see
-    // colony/brood.ts), so a nurse can burn her whole tick "tending" an EGG or
-    // PUPA that was first in the array. Filtering to
-    // `brood.stage === "LARVA" && !brood.tendedThisTick` here would meaningfully
-    // improve brood throughput — see the Phase 3 review notes.
-    const nerbyBrood = state.brood.find((brood) => {
-        const onSameTile = brood.position.x === ant.position.x && brood.position.y === ant.position.y;
-        const onNeighborTile = neighborTiles.some((tile) => tile.x === brood.position.x && tile.y === brood.position.y);
-
-        return onSameTile || onNeighborTile;
-    });
+    // "Available" means: still an EGG (LARVA/PUPA aren't carried anywhere in
+    // this phase), physically still sitting in the QUEEN chamber (an egg's
+    // position IS its location — no separate "which chamber" field needed),
+    // and not already claimed by a nurse. Brood.carriedBy is the single
+    // source of truth for that last part — jobs.ts sets it in the same step
+    // it adds the id to the nurse's Ant.carrying list, so within this tick's
+    // per-ant loop a nurse earlier in the sort order will already have
+    // stamped carriedBy before a later nurse perceives.
+    const eggsAvailableInQueenChamber = state.brood.some(
+        (brood) =>
+            brood.stage === "EGG" &&
+            chamberAt(state.nest, brood.position) === "QUEEN" &&
+            brood.carriedBy === undefined
+    );
 
     return {
-        onFoodPileIndex,
-        nearBroodId: nerbyBrood?.id,
+        currentChamber,
+        carrying: ant.carrying,
         hungerRatio: ant.energy / MAX_ENERGY,
-    }
+        eggsAvailableInQueenChamber,
+    };
 }
 

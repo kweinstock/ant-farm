@@ -25,20 +25,19 @@ export function startRenderLoop(canvas: HTMLCanvasElement, getState: () => Colon
   function render(): void {
     const state = getState();
 
-    // Re-derived and reassigned every frame even though it's currently
-    // constant (grid is always 10x10 — see state.ts). Setting .width/.height
-    // clears the canvas as a side effect regardless of whether the value
-    // actually changed, so this is a bit wasteful, but harmless at this
-    // scale. If the grid can ever resize later, this needs to stay; if not,
-    // it's a candidate to hoist outside render() and only run once.
+    // Re-derived and reassigned every frame even though the grid is static
+    // post-Phase-3a (no digging mechanic). Setting .width/.height clears the
+    // canvas as a side effect regardless of whether the value actually
+    // changed — wasteful but harmless at 24x16 (960x640). Hoist outside
+    // render() if the grid is ever confirmed to never resize mid-run.
     canvas.width = state.grid.width * CELL_SIZE;
     canvas.height = state.grid.height * CELL_SIZE;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Painter's order, back to front: board, then food, then brood, then
+    // Painter's order, back to front: tiles, then food, then brood, then
     // ants on top (an ant standing on food/brood should be visible).
-    renderGrid(ctx, state.grid);
+    renderGrid(ctx, state.grid, state.nest);
     renderResources(ctx, state);
     renderBrood(ctx, state);
     renderAnts(ctx, state);

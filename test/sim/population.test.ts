@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { createInitialState } from "../../src/sim/state";
 import { step } from "../../src/sim";
-import { MAX_BROOD } from "../../src/sim/colony/queen";
+import { tilesOf } from "../../src/sim/world/nest";
+import { NURSERY_TILE_CAPACITY } from "../../src/sim/ants/jobs";
 
 // Tune once real runs show what "sane" looks like. The lower bound treats
 // extinction as a failure — but ONLY while the colony still has a queen.
@@ -17,6 +18,11 @@ describe("population dynamics", () => {
         let state = createInitialState(12345);
         let queenEverDied = false;
 
+        // The real brood ceiling in 3a: nursery-tile count x per-tile cap.
+        // queen.ts gates laying on state.brood.length staying under this, so
+        // brood can never run away even if the nurses fall behind.
+        const maxBrood = tilesOf(state.nest, "NURSERY").length * NURSERY_TILE_CAPACITY;
+
         for (
             let ticksElapsed = SAMPLE_INTERVAL_TICKS;
             ticksElapsed <= TOTAL_TICKS;
@@ -30,10 +36,10 @@ describe("population dynamics", () => {
             }
 
             // Always: no population explosion, and brood can't run away
-            // (this is the "without unbounded growth" clause — enforceable
-            // now that queen.ts caps the nursery at MAX_BROOD).
+            // (the "without unbounded growth" clause — enforced by queen.ts's
+            // lay gate against nursery capacity).
             expect(state.ants.size).toBeLessThanOrEqual(MAX_SANE_POPULATION);
-            expect(state.brood.length).toBeLessThanOrEqual(MAX_BROOD);
+            expect(state.brood.length).toBeLessThanOrEqual(maxBrood);
 
             // While the queen is alive the colony must not die out. After she
             // dies there's no succession yet (colony/caste.ts) and no forager

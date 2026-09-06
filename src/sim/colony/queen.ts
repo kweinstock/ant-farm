@@ -5,25 +5,21 @@
 // drone (haplodiploidy). Emits eggs into colony/brood.ts. QueenDied event when
 // she reaches lifespan — colony then declines unless colony/caste.ts has raised
 // a replacement.
+//
+// PHASE 3a: MAX_BROOD is gone. The nursery-tile cap (3 eggs/tile, enforced in
+// ants/jobs.ts's placeEgg) plus the nurse-carrying cap (3/nurse, enforced in
+// ants/behavior.ts) are the real ceiling on placed brood now — a colony-level
+// brood cap on top of that would just be a second, disagreeing limit.
 
 import { rng } from "../rng";
 import { ageAndMeter } from "../ants/lifecycle";
 import type { Ant } from "../ants/ant";
 import type { ColonyState } from "../state";
 import { layEgg, type Brood } from "./brood";
+import { tilesOf } from "../world/nest";
 
 const BASE_LAY_PROBABILITY = 0.1;
-const FOOD_REFERENCE_PER_ANT = 40;
 const POPULATION_SOFT_TARGET = 30;
-
-// Hard ceiling on how much brood can exist at once — think nursery capacity /
-// how many young the colony can physically care for. Without this the queen
-// out-lays what the (few) nurses can raise and state.brood grows forever:
-// unbounded memory, and perceive()'s per-ant brood scan gets slower every
-// tick. This bounds the leak; it does NOT fix the underlying nurse-throughput
-// imbalance (see the note in colony/brood.ts / the Phase 3 review). Exported
-// so population.test.ts can assert brood stays bounded.
-export const MAX_BROOD = 40;
 
 export type QueenTickResult = {
     brood: Brood[];
@@ -57,18 +53,20 @@ export function tickQueen(state: ColonyState): QueenTickResult {
     }
 
     const population = Math.max(state.ants.size, 1);
-    const totalFood = state.resources.reduce((sum, pile) => sum + pile.amount, 0);
-    const foodPerAnt = totalFood / population;
-
-    const foodFactor = Math.min(foodPerAnt / FOOD_REFERENCE_PER_ANT, 1);
     const populationFactor = POPULATION_SOFT_TARGET / Math.max(population, POPULATION_SOFT_TARGET);
 
-    const layProbability = BASE_LAY_PROBABILITY * foodFactor * populationFactor;
+    // PHASE 3a: no foodFactor. The single-number foodStore is a placeholder
+    // (world/resources.ts) with a passive regen — it isn't a real economy
+    // until 3b's foragers stock it from actual trips, so it shouldn't gate
+    // laying yet. Phase 4 restores `foodFactor` here (foodStore.amount /
+    // population / FOOD_REFERENCE_PER_ANT, clamped to 1) once that's true.
+    const layProbability = BASE_LAY_PROBABILITY * populationFactor;
 
     // Roll unconditionally (keeps the RNG cadence identical whether or not the
     // nursery is full), then gate on capacity.
     const roll = rng(state.rngSeed);
-    const shouldLay = roll.value < layProbability && state.brood.length < MAX_BROOD;
+    const nurseryCapacity = tilesOf(state.nest, "NURSERY").length * 3;
+    const shouldLay = roll.value < layProbability && state.brood.length < nurseryCapacity;
 
     const brood = shouldLay ? [...state.brood, layEgg(state)] : state.brood;
 
