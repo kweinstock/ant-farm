@@ -6,13 +6,21 @@
 // decideForager reads `ant.carryingFood` straight off the Ant rather than
 // through Perception, same as decide() already does with ant.job — no
 // reason to duplicate a field Perception doesn't otherwise need.
-import type { Ant } from "./ant";
-import type { AntLocation } from "./ant";
+//
+// PHASE 3c: crossExit moved out to jobs.ts — it's now shared with the
+// undertaker round trip (see jobs.ts's header comment), so this file no
+// longer needs `exitMouth`. surfaceStep picked up a corpse-sync step this
+// phase instead: it's the one action an undertaker uses while hauling a
+// corpse across the surface (nest-side hauling goes through jobs.ts's
+// goto/crossExit). That sync logic is duplicated here rather than imported
+// from jobs.ts's copy of it — jobs.ts already imports this file at runtime
+// (pickUpFood etc.), so importing anything back at runtime would be a real
+// cycle. Two duplicated lines is cheaper than restructuring around that.
+import type { Ant, AntLocation } from "./ant";
 import type { Perception } from "./senses";
 import type { Action } from "./behavior";
 import { HUNGER_THRESHOLD } from "./ant";
 import { wander, stepToward } from "./movement";
-import { exitMouth } from "../world/nest";
 import { takeFromPile } from "../world/surface";
 import { depositToStore } from "../world/resources";
 import { FORAGER_LOAD } from "../state";
@@ -22,22 +30,12 @@ import type { ActResult } from "./jobs";
 
 export function decideForager(ant: Ant, perception: Perception): Action {
     if (perception.where === "nest") {
-        // Note: a *hungry* nest forager never reaches here — behavior.ts's
-        // rule 2 (hunger, nest-only) catches it before rule 4 delegates to
-        // this function. So the nest branch only handles "deliver a load" or
-        // "head back out to forage."
         if (ant.carryingFood > 0) {
             return perception.currentChamber === "FOOD_STORAGE" ? { type: "depositFood" } : { type: "goto", role: "FOOD_STORAGE" };
         }
         return perception.atExitMouth ? { type: "crossExit" } : { type: "goto", role: "EXIT" };
     }
 
-    // Surface. Head home if carrying a load OR hungry — there's no food store
-    // out here, so a hungry forager has to cross back in to eat (behavior.ts's
-    // rule 2 then routes it to FOOD_STORAGE once it's in the nest). Both cases
-    // walk to the hole and cross; the `atHole -> crossExit` step is the part
-    // the earlier draft was missing for the hungry case, which left starving
-    // foragers milling on the hole tile forever.
     const goHome = ant.carryingFood > 0 || perception.hungerRatio < HUNGER_THRESHOLD;
     if (goHome) {
         return perception.atHole ? { type: "crossExit" } : { type: "surfaceStep", target: perception.holePos };
@@ -59,16 +57,17 @@ export function pickUpFood(state: ColonyState, ant: Ant): ActResult {
     const pile = state.surface.foodPiles.find((p) => p.pos.x === pos.x && p.pos.y === pos.y);
 
     if (!pile) {
-        return {ant, brood: state.brood, foodStore: state.foodStore, surface: state.surface, rngSeed: state.rngSeed};
+        return { ant, brood: state.brood, foodStore: state.foodStore, surface: state.surface, corpses: state.corpses, rngSeed: state.rngSeed };
     }
 
-    const {surface, taken} = takeFromPile(state.surface, pile.id, FORAGER_LOAD);
+    const { surface, taken } = takeFromPile(state.surface, pile.id, FORAGER_LOAD);
 
     return {
-        ant: {...ant, carryingFood: taken},
+        ant: { ...ant, carryingFood: taken },
         brood: state.brood,
         foodStore: state.foodStore,
         surface,
+        corpses: state.corpses,
         rngSeed: state.rngSeed,
     };
 }
@@ -81,33 +80,25 @@ export function depositFood(state: ColonyState, ant: Ant): ActResult {
         brood: state.brood,
         foodStore,
         surface: state.surface,
-        rngSeed: state.rngSeed,
-    };
-}
-
-export function crossExit(state: ColonyState, ant: Ant): ActResult {
-    const location: AntLocation =
-        ant.location.where === "nest"
-            ? { where: "surface", pos: state.surface.holePos }
-            : { where: "nest", pos: exitMouth(state.nest) };
-
-    return {
-        ant: { ...ant, location },
-        brood: state.brood,
-        foodStore: state.foodStore,
-        surface: state.surface,
+        corpses: state.corpses,
         rngSeed: state.rngSeed,
     };
 }
 
 export function surfaceStep(state: ColonyState, ant: Ant, target: Position): ActResult {
     const result = stepToward(state.surface.grid, ant.location.pos, target, state.rngSeed);
+    const location: AntLocation = { where: "surface", pos: result.position };
+
+    const corpses = state.corpses.some((corpse) => corpse.carriedBy === ant.id)
+        ? state.corpses.map((corpse) => (corpse.carriedBy === ant.id ? { ...corpse, location } : corpse))
+        : state.corpses;
 
     return {
-        ant: { ...ant, location: { where: "surface", pos: result.position } },
+        ant: { ...ant, location },
         brood: state.brood,
         foodStore: state.foodStore,
         surface: state.surface,
+        corpses,
         rngSeed: result.seed,
     };
 }
@@ -120,6 +111,7 @@ export function surfaceWander(state: ColonyState, ant: Ant): ActResult {
         brood: state.brood,
         foodStore: state.foodStore,
         surface: state.surface,
+        corpses: state.corpses,
         rngSeed: result.seed,
     };
 }

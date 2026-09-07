@@ -8,10 +8,11 @@
 import type { Ant } from "./ant";
 import { MAX_ENERGY } from "./ant";
 import { chamberAt, exitMouth, type ChamberRole } from "../world/nest";
-import { nearestPile, type FoodPileId } from "../world/surface";
+import { nearestPile, inGraveyard, graveyardSlot, type FoodPileId } from "../world/surface";
 import { manhattanDistance, type Position } from "../world/grid";
 import type { ColonyState } from "../state";
 import type { BroodId } from "../colony/brood";
+import { corpseById } from "../corpses";
 
 // How far (Manhattan tiles) a forager can "notice" a pile it hasn't already
 // reached. Without this, nearestPile's result would be visible from
@@ -30,14 +31,21 @@ export type Perception = {
     currentChamber: ChamberRole | undefined;
     atExitMouth: boolean;
     atHole: boolean;
-    // Always set (the surface hole is a fixed point, cheap to include for
-    // nest ants too) so foraging.ts doesn't have to `?? {x:0,y:0}` it.
     holePos: Position;
     onFoodPileId: FoodPileId | undefined;
     nearestFoodPilePos: Position | undefined;
     carrying: BroodId[];
     hungerRatio: number;
     eggsAvailableInQueenChamber: boolean;
+    assignedCorpse: { pos: Position; where: "nest" | "surface" } | undefined;
+    assignedCorpseBuried: boolean;
+    carryingCorpse: boolean;
+    onAssignedCorpse: boolean;
+    // This undertaker's assigned drop slot (spreads bodies across the
+    // graveyard's tiles — see world/surface.ts:graveyardSlot), and whether
+    // it's standing on it.
+    graveyardPos: Position;
+    atGraveyardSlot: boolean;
 };
 
 export function perceive(state: ColonyState, ant: Ant): Perception {
@@ -80,6 +88,27 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
             brood.carriedBy === undefined
     );
 
+    const assignedCorpseEntry = ant.undertaking !== undefined ? corpseById(state, ant.undertaking.corpseId) : undefined;
+
+    const assignedCorpse = assignedCorpseEntry
+        ? { pos: assignedCorpseEntry.location.pos, where: assignedCorpseEntry.location.where }
+        : undefined;
+
+    // Assigned corpse is already at rest (someone else buried it while I was
+    // en route) — decideUndertaker uses this to abort instead of walking to
+    // the graveyard to "re-bury" it.
+    const assignedCorpseBuried =
+        assignedCorpseEntry !== undefined &&
+        assignedCorpseEntry.location.where === "surface" &&
+        inGraveyard(state.surface, assignedCorpseEntry.location.pos);
+
+    const carryingCorpse = state.corpses.some((corpse) => corpse.carriedBy === ant.id);
+    const onAssignedCorpse = assignedCorpse !== undefined && assignedCorpse.where === where && assignedCorpse.pos.x === pos.x && assignedCorpse.pos.y === pos.y;
+    // Only meaningful for a carrying undertaker, but cheap enough (24-ish
+    // tiles) to compute unconditionally, like holePos.
+    const graveyardPos = graveyardSlot(state.surface, state.corpses, pos);
+    const atGraveyardSlot = where === "surface" && pos.x === graveyardPos.x && pos.y === graveyardPos.y;
+
     return {
         where,
         currentChamber,
@@ -91,5 +120,11 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
         carrying: ant.carrying,
         hungerRatio: ant.energy / MAX_ENERGY,
         eggsAvailableInQueenChamber,
+        assignedCorpse,
+        assignedCorpseBuried,
+        carryingCorpse,
+        onAssignedCorpse,
+        graveyardPos,
+        atGraveyardSlot,
     };
 }

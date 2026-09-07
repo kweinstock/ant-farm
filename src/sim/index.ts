@@ -15,16 +15,30 @@
 //   1. apply queued visitor inputs        (inputs.ts)
 //   2. advance environment                (environment/*)  clock, season, weather, temperature, hazards
 //   3. pheromone diffuse + evaporate      (pheromones.ts)
+//   3.5 undertaker assignment             (corpses.ts)      assignUndertakers, run against tick-start
+//                                                            corpses/ants before the worker loop below —
+//                                                            a corpse created by THIS tick's deaths is
+//                                                            picked up starting next tick, not this one
 //   4. sense -> decide -> act, per worker (ants/*)          nest-side goto/mill/pickUpEgg/placeEgg/eat,
 //                                                            or surface-side crossExit/pickUpFood/
-//                                                            depositFood/surfaceStep/surfaceWander —
+//                                                            depositFood/surfaceStep/surfaceWander, or
+//                                                            the undertaker round trip (moveToNestPoint/
+//                                                            pickUpCorpse/dropCorpse/clearUndertaking) —
 //                                                            act() branches internally on ant.location.where
+//                                                            and ant.undertaking
 //   5. colony processes                   (colony/*)        queen laying, brood development, caste fate, nuptial flights
-//   6. lifecycle resolution               (ants/lifecycle.ts) aging, starvation, death, job reassignment
-//   7. surface world step                 (world/surface.ts) spawnFoodPiles, ageFoodPiles — replaces the
-//                                                            deleted regenFoodStore; foragers are now the
-//                                                            only inflow to foodStore, this just governs
-//                                                            what's out there for them to find
+//   6. lifecycle resolution               (ants/lifecycle.ts) aging, starvation, death, job reassignment —
+//                                                            a death (worker OR queen) also drops a Corpse
+//                                                            into state.corpses at this point (see below);
+//                                                            if the dead ant was mid-haul as an undertaker,
+//                                                            the corpse it was carrying is released
+//                                                            (carriedBy cleared) rather than lost
+//   7. world upkeep                       (world/surface.ts, spawnFoodPiles, ageFoodPiles, ageCorpses — renamed
+//                                          corpses.ts)        from "surface world step": corpses aren't
+//                                                            surface-only (most die and decay underground),
+//                                                            so aging them alongside the surface's own
+//                                                            spawn/decay step is bookkeeping, not a surface
+//                                                            concern specifically
 //   8. genetics + lineage bookkeeping     (genetics/*)      offspring traits, family-tree edges, extinction marks
 //   9. collect + return events
 //
@@ -34,6 +48,14 @@
 // The queen is still not part of that loop; she's handled entirely by
 // colony/queen.ts's tickQueen, as part of step 5. She also never touches
 // the surface, so nothing about this phase's location split applies to her.
+//
+// PHASE 3c NOTE: step 3.5 is new. It's deliberately its own step rather than
+// folded into the step-4 loop, because assignUndertakers needs to see ALL
+// workers and ALL corpses at once (it's a global proximity-weighted
+// assignment, not a per-ant decision) — the step-4 loop below processes one
+// worker at a time and couldn't compute that. The queen is never a
+// candidate (assignUndertakers filters to caste === "WORKER"), consistent
+// with her sitting outside the whole sense->decide->act loop already.
 import { ageAndMeter } from "./ants/lifecycle";
 import { perceive } from "./ants/senses";
 import { decide } from "./ants/behavior";
@@ -41,6 +63,7 @@ import { act } from "./ants/jobs";
 import { tickQueen } from "./colony/queen";
 import { advanceBrood } from "./colony/brood";
 import { spawnFoodPiles, ageFoodPiles } from "./world/surface";
+import { createCorpse, ageCorpses, assignUndertakers } from "./corpses";
 import type { ColonyState } from "./state";
 import type { AntId } from "./ants/ant";
 
@@ -64,14 +87,26 @@ type TickResult = {
     events: SimEvent[];
 };
 
+function recordDeath(corpses: ColonyState["corpses"], nextCorpseId: number, deadAnt: Parameters<typeof createCorpse>[0]): {corpses: ColonyState["corpses"]; nextCorpseId: number} {
+    const withNewCorpse = [...corpses, createCorpse(deadAnt, `corpse-${nextCorpseId}`)];
+    const released = withNewCorpse.some((corpse) => corpse.carriedBy === deadAnt.id) ? withNewCorpse.map((corpse) => corpse.carriedBy === deadAnt.id ? { ...corpse, carriedBy: undefined } : corpse) : withNewCorpse;
+    return { corpses: released, nextCorpseId: nextCorpseId + 1 };
+}
+
 function singleTick(state: ColonyState): TickResult {
     const events: SimEvent[] = [];
 
-    const workers = Array.from(state.ants.values())
+    const undertakerAssignment = assignUndertakers(state);
+
+    let currentState: ColonyState = {
+        ...state,
+        ants: undertakerAssignment.ants,
+        rngSeed: undertakerAssignment.rngSeed,
+    };
+
+    const workers = Array.from(currentState.ants.values())
         .filter((ant) => ant.caste === "WORKER")
         .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-
-    let currentState: ColonyState = state
 
     for (const worker of workers) {
         const {ant: metered, isDead} = ageAndMeter(worker);
@@ -79,17 +114,15 @@ function singleTick(state: ColonyState): TickResult {
         if (isDead) {
             const nextAnts = new Map(currentState.ants);
             nextAnts.delete(metered.id);
-            currentState = {...currentState, ants: nextAnts};
+
+            const { corpses, nextCorpseId } = recordDeath(currentState.corpses, currentState.nextCorpseId, metered);
+
+            currentState = {...currentState, ants: nextAnts, corpses, nextCorpseId};
 
             events.push({kind: "death", antId: metered.id, ageTicks: metered.ageTicks});
             continue;
         }
 
-        // sense -> decide -> act, reading/writing currentState as it stands
-        // after every previous worker this same tick — not a snapshot from
-        // before the loop started. That's what makes ant #2 see ant #1's
-        // already-updated resources/rngSeed, and is the seed-threading rule
-        // applied across ants rather than across RNG calls within one ant.
         const perception = perceive(currentState, metered);
         const action = decide(metered, perception);
         const actResult = act(currentState, metered, action);
@@ -103,19 +136,23 @@ function singleTick(state: ColonyState): TickResult {
             brood: actResult.brood,
             foodStore: actResult.foodStore,
             surface: actResult.surface,
+            corpses: actResult.corpses,
             rngSeed: actResult.rngSeed,
         };
     }
 
-    // Colony processes: queen laying, then brood development. Order matters
-    // — advanceBrood should see any egg the queen just laid this tick.
     if (currentState.ants.has(currentState.queenId)) {
         const broodCountBeforeQueen = currentState.brood.length;
         const queenResult = tickQueen(currentState);
 
         const nextAntsAfterQueen = new Map(currentState.ants);
+        let corpses = currentState.corpses;
+        let nextCorpseId = currentState.nextCorpseId;
+
         if (queenResult.isDead) {
             nextAntsAfterQueen.delete(currentState.queenId);
+            ({ corpses, nextCorpseId } = recordDeath(corpses, nextCorpseId, queenResult.queen));
+
             events.push({
                 kind: "death",
                 antId: currentState.queenId,
@@ -131,6 +168,8 @@ function singleTick(state: ColonyState): TickResult {
             ...currentState,
             ants: nextAntsAfterQueen,
             brood: queenResult.brood,
+            corpses,
+            nextCorpseId,
             nextBroodId: currentState.nextBroodId + (queenLaidEgg ? 1 : 0),
             rngSeed: queenResult.rngSeed,
         };
@@ -152,17 +191,9 @@ function singleTick(state: ColonyState): TickResult {
         rngSeed: broodResult.rngSeed,
     };
 
-    // Surface world step: spawn, then age/decay. Order matches the pattern
-    // everywhere else in this file (the thing produced this tick is what
-    // the next step sees) — a pile spawned this tick starts at ageTicks: 0
-    // and immediately gets bumped to 1 by ageFoodPiles below, rather than
-    // sitting at 0 for a full extra tick before aging starts. Replaces the
-    // deleted regenFoodStore call from 3a — foodStore itself isn't touched
-    // here at all anymore; foragers depositing via jobs.ts's depositFood
-    // case, earlier in this same tick's worker loop, are the only thing
-    // that changes it now.
     const spawnResult = spawnFoodPiles(currentState.surface, currentState.rngSeed);
     const surface = ageFoodPiles(spawnResult.surface);
+    const corpses = ageCorpses(currentState.corpses);
 
     return {
         state: {
@@ -170,6 +201,7 @@ function singleTick(state: ColonyState): TickResult {
             seq: currentState.seq + 1,
             simTime: currentState.simTime + 1,
             surface,
+            corpses,
             rngSeed: spawnResult.seed,
         },
         events,

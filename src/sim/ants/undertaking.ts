@@ -1,0 +1,113 @@
+// The undertaker-specific decide logic and act handlers — mirrors
+// foraging.ts's structure exactly (a decideX function behavior.ts's rule
+// delegates to, plus the act handlers jobs.ts dispatches to). Owning both
+// halves here keeps behavior.ts's rule list and jobs.ts's switch from
+// growing undertaker-specific branches inline, same reasoning foraging.ts
+// already established for the forager round trip.
+import type { Ant } from "./ant";
+import type { Perception } from "./senses";
+import type { Action } from "./behavior";
+import { moveToward } from "./movement";
+import { distanceField } from "../world/nest";
+import type { ColonyState } from "../state";
+import type { Position } from "../world/grid";
+import type { ActResult } from "./jobs";
+
+// Unlike decideForager, this reads everything it needs from Perception
+// (carryingCorpse, assignedCorpse, atGraveyardSlot, ...) — no `ant` param.
+export function decideUndertaker(perception: Perception): Action {
+    if (perception.assignedCorpse === undefined) {
+        return { type: "clearUndertaking" };
+    }
+
+    // Someone else already handled my corpse while I was en route — it's
+    // buried, or it's in a space I can't reach it from (and I'm not the one
+    // carrying it). Give up; assignUndertakers hands me a fresh one next tick
+    // if any are still waiting.
+    if (!perception.carryingCorpse && (perception.assignedCorpseBuried || perception.assignedCorpse.where !== perception.where)) {
+        return { type: "clearUndertaking" };
+    }
+
+    if (perception.carryingCorpse) {
+        if (perception.where === "nest") {
+            return perception.atExitMouth ? { type: "crossExit" } : { type: "goto", role: "EXIT" };
+        }
+        // graveyardPos is this ant's assigned slot (senses.ts:graveyardSlot),
+        // not the graveyard centre — walk all the way onto it, then set the
+        // body down exactly there so the pile spreads across tiles.
+        return perception.atGraveyardSlot
+            ? { type: "dropCorpse" }
+            : { type: "surfaceStep", target: perception.graveyardPos };
+    }
+
+    if (perception.onAssignedCorpse) {
+        return { type: "pickUpCorpse" };
+    }
+
+    return perception.where === "nest"
+        ? { type: "moveToNestPoint", target: perception.assignedCorpse.pos }
+        : { type: "surfaceStep", target: perception.assignedCorpse.pos };
+}
+
+export function pickUpCorpse(state: ColonyState, ant: Ant): ActResult {
+    const corpseId = ant.undertaking?.corpseId;
+    const corpse = corpseId !== undefined ? state.corpses.find((entry) => entry.id === corpseId) : undefined;
+
+    if (!corpse || corpse.carriedBy !== undefined) {
+        return { ant, brood: state.brood, foodStore: state.foodStore, surface: state.surface, corpses: state.corpses, rngSeed: state.rngSeed };
+    }
+
+    const corpses = state.corpses.map((entry) =>
+        entry.id === corpse.id ? { ...entry, carriedBy: ant.id } : entry
+    );
+
+    return { ant, brood: state.brood, foodStore: state.foodStore, surface: state.surface, corpses, rngSeed: state.rngSeed };
+}
+
+export function dropCorpse(state: ColonyState, ant: Ant): ActResult {
+    const corpseId = ant.undertaking?.corpseId;
+    // The ant walked all the way onto its assigned slot (decideUndertaker
+    // only emits dropCorpse when atGraveyardSlot), so set the body down right
+    // where the carrier is standing — no teleport.
+    const target = ant.location.pos;
+
+    const corpses = state.corpses.map((corpse) =>
+        corpse.id === corpseId
+            ? { ...corpse, location: { where: "surface" as const, pos: target }, carriedBy: undefined }
+            : corpse
+    );
+
+    return {
+        ant: { ...ant, undertaking: undefined },
+        brood: state.brood,
+        foodStore: state.foodStore,
+        surface: state.surface,
+        corpses,
+        rngSeed: state.rngSeed,
+    };
+}
+
+export function clearUndertaking(state: ColonyState, ant: Ant): ActResult {
+    return {
+        ant: { ...ant, undertaking: undefined },
+        brood: state.brood,
+        foodStore: state.foodStore,
+        surface: state.surface,
+        corpses: state.corpses,
+        rngSeed: state.rngSeed,
+    };
+}
+
+export function moveToNestPoint(state: ColonyState, ant: Ant, target: Position): ActResult {
+    const field = distanceField(state.grid, [target]);
+    const result = moveToward(state.grid, field, ant.location.pos, state.rngSeed);
+
+    return {
+        ant: { ...ant, location: { where: "nest", pos: result.position } },
+        brood: state.brood,
+        foodStore: state.foodStore,
+        surface: state.surface,
+        corpses: state.corpses,
+        rngSeed: result.seed,
+    };
+}

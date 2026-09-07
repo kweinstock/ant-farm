@@ -1,17 +1,19 @@
 // Side cross-section of the underground: tiles by type/chamber-role tint
 // (folded in from the deleted render/grid.ts), the FOOD_STORAGE gauge
-// (folded in from the deleted render/resources.ts), brood, and ants
-// filtered to where === "nest". PHASE 3b: the two-view split means every
-// render module needs to own a specific state slice — "the whole nest" was
-// already the natural unit for tiles+food+brood+nest-side ants to share, so
-// this absorbs what used to be three separate files instead of importing
-// them piecemeal.
+// (folded in from the deleted render/resources.ts), brood, corpses, and
+// ants filtered to where === "nest". PHASE 3b: the two-view split means
+// every render module needs to own a specific state slice — "the whole
+// nest" was already the natural unit for tiles+food+brood+nest-side ants to
+// share, so this absorbs what used to be three separate files instead of
+// importing them piecemeal. PHASE 3c folds corpses into that same unit.
 import { tileAt, TILE, type Grid } from "../../sim/world/grid";
 import { chamberAt, tilesOf, type ChamberRole, type Nest } from "../../sim/world/nest";
 import type { ColonyState } from "../../sim/state";
 import type { Brood } from "../../sim/colony/brood";
+import type { Corpse } from "../../sim/corpses";
+import type { AntId } from "../../sim/ants/ant";
 import { CELL_SIZE } from "../config";
-import { drawAnt } from "./ants";
+import { drawAnt, drawCorpse } from "./ants";
 
 const TILE_COLOR: Record<number, string> = {
     [TILE.SOIL]: "#3b2a1a",
@@ -149,14 +151,55 @@ function renderBrood(ctx: CanvasRenderingContext2D, brood: Brood[]): void {
     }
 }
 
+// Groups corpses by tile and spreads any that share one in a small spiral —
+// the same technique renderBrood uses above, for the same reason: with no
+// occupancy mechanic (corpses.ts's header comment), nothing stops two dead
+// ants landing on one tile, and without this they'd render as one
+// indistinguishable blob. Excludes carried corpses (they ride the
+// undertaker — drawAnt's carry-dot covers that) and surface-side ones (not
+// this view's concern).
+function renderCorpses(ctx: CanvasRenderingContext2D, corpses: Corpse[]): void {
+    const groups = new Map<string, Corpse[]>();
+    for (const corpse of corpses) {
+        if (corpse.carriedBy !== undefined || corpse.location.where !== "nest") {
+            continue;
+        }
+        const key = `${corpse.location.pos.x},${corpse.location.pos.y}`;
+        const group = groups.get(key);
+        if (group) {
+            group.push(corpse);
+        } else {
+            groups.set(key, [corpse]);
+        }
+    }
+
+    for (const group of groups.values()) {
+        group.forEach((corpse, i) => {
+            const angle = i * 2.399963;
+            const spread = i === 0 ? 0 : CELL_SIZE * 0.12 + Math.sqrt(i) * CELL_SIZE * 0.1;
+            const dx = Math.cos(angle) * spread;
+            const dy = Math.sin(angle) * spread;
+            drawCorpse(ctx, corpse, CELL_SIZE, { dx, dy });
+        });
+    }
+}
+
 export function renderNestView(ctx: CanvasRenderingContext2D, state: ColonyState): void {
     renderTiles(ctx, state.grid, state.nest);
     renderFoodGauge(ctx, state);
     renderBrood(ctx, state.brood);
+    renderCorpses(ctx, state.corpses);
+
+    // Corpse-carriers, built once per frame rather than checking
+    // ant.undertaking on drawAnt's behalf — see ants.ts's comment on why
+    // the carry-dot tracks carriedBy, not the assignment.
+    const corpseCarriers = new Set<AntId>(
+        state.corpses.filter((corpse) => corpse.carriedBy !== undefined).map((corpse) => corpse.carriedBy as AntId)
+    );
 
     for (const ant of state.ants.values()) {
         if (ant.location.where === "nest") {
-            drawAnt(ctx, ant, CELL_SIZE);
+            drawAnt(ctx, ant, CELL_SIZE, corpseCarriers.has(ant.id));
         }
     }
 

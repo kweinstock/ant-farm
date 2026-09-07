@@ -1,6 +1,7 @@
 import type { Position } from "../world/grid";
 import { randomInt } from "../rng";
 import { BroodId } from "../colony/brood";
+import type { CorpseId } from "../corpses";
 
 const STARTING_ENERGY = 1500;
 export const MAX_ENERGY = 1500;
@@ -28,6 +29,7 @@ export type Ant = {
     job: Job;
     carrying: BroodId[];
     carryingFood: number;
+    undertaking?: { corpseId: CorpseId };
     location: AntLocation;
     energy: number;
     ageTicks: number;
@@ -44,6 +46,7 @@ export function createWorker(id: AntId, position: Position, currentSeed: number)
             job: "NURSE",
             carrying: [],
             carryingFood: 0,
+            undertaking: undefined,
             location: { where: "nest", pos: position },
             energy: STARTING_ENERGY,
             ageTicks: 0,
@@ -63,6 +66,7 @@ export function createQueen(id: AntId, position: Position, currentSeed: number):
             job: "NURSE",
             carrying: [],
             carryingFood: 0,
+            undertaking: undefined,
             location: { where: "nest", pos: position },
             energy: STARTING_ENERGY,
             ageTicks: 0,

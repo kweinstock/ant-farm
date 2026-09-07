@@ -78,6 +78,61 @@ function inRect(pos: Position, rect: Rect): boolean {
     return pos.x >= rect.x0 && pos.x <= rect.x1 && pos.y >= rect.y0 && pos.y <= rect.y1;
 }
 
+// Soft target: a grave tile prefers to hold this many bodies before the next
+// one spills to another tile. Not a hard cap — a busy colony's graveyard can
+// exceed the rect's whole capacity (decay is what actually bounds it), and
+// then bodies just pile deeper on the least-crowded tiles.
+export const CORPSE_PER_GRAVE_TILE = 2;
+
+export function inGraveyard(surface: Surface, pos: Position): boolean {
+    return inRect(pos, surface.graveyard);
+}
+
+function graveyardTiles(surface: Surface): Position[] {
+    const { x0, x1, y0, y1 } = surface.graveyard;
+    const tiles: Position[] = [];
+    for (let y = y0; y <= y1; y++) {
+        for (let x = x0; x <= x1; x++) {
+            tiles.push({ x, y });
+        }
+    }
+    return tiles;
+}
+
+// Where a hauled body actually gets set down: the graveyard tile with the
+// fewest bodies already on it (so the pile spreads instead of stacking on one
+// spot), ties broken by nearness to `near` — the undertaker's own position —
+// so a body lands roughly where its carrier walked in. `corpses` is scanned
+// for placed graveyard bodies only (carried ones are mid-haul, their position
+// is a lie synced to the carrier). Fully deterministic: no RNG, fixed tile
+// order, deterministic corpse list.
+export function graveyardSlot(surface: Surface, corpses: { location: { where: string; pos: Position }; carriedBy?: unknown }[], near: Position): Position {
+    const occupancy = new Map<string, number>();
+    for (const corpse of corpses) {
+        if (corpse.carriedBy === undefined && corpse.location.where === "surface" && inRect(corpse.location.pos, surface.graveyard)) {
+            const key = `${corpse.location.pos.x},${corpse.location.pos.y}`;
+            occupancy.set(key, (occupancy.get(key) ?? 0) + 1);
+        }
+    }
+
+    let best: Position | undefined;
+    let bestCount = Infinity;
+    let bestDist = Infinity;
+
+    for (const tile of graveyardTiles(surface)) {
+        const count = occupancy.get(`${tile.x},${tile.y}`) ?? 0;
+        const dist = Math.abs(tile.x - near.x) + Math.abs(tile.y - near.y);
+        if (count < bestCount || (count === bestCount && dist < bestDist)) {
+            best = tile;
+            bestCount = count;
+            bestDist = dist;
+        }
+    }
+
+    return best ?? { x: surface.graveyard.x0, y: surface.graveyard.y0 };
+}
+
+
 // Ids are assigned as `pile-${n}` in strictly increasing n (see
 // createSurface/spawnFoodPiles' nextPileId counter, which — like
 // nextBroodId/nextAntId elsewhere — only ever increments, even across piles
@@ -96,14 +151,15 @@ export function createSurface(width: number, height: number): Surface {
     // stacked vertically in the render (render/surface-view.ts, file 12).
     const holePos: Position = { x: Math.floor(width / 2), y: height - 1 };
 
-    // A 3-tile strip beside the hole, same row, offset clear of the hole
-    // itself and its exclusion radius. Reserved for 3c (undertaker corpse
-    // drops) — nothing reads or writes it this phase beyond spawnFoodPiles
-    // excluding it and the render giving it a faint marker (file 12).
+    // A patch beside the hole, clear of the hole and its spawn-exclusion
+    // radius. Undertakers drop bodies here (graveyardSlot spreads them across
+    // its tiles). Sized for the steady-state buried count a busy colony
+    // carries in the decay pipeline (~30-40) at CORPSE_PER_GRAVE_TILE each,
+    // though decay — not capacity — is the real bound.
     const graveyard: Rect = {
         x0: holePos.x + HOLE_EXCLUSION_RADIUS + 1,
-        y0: holePos.y,
-        x1: holePos.x + HOLE_EXCLUSION_RADIUS + 3,
+        y0: holePos.y - 3,
+        x1: holePos.x + HOLE_EXCLUSION_RADIUS + 6,
         y1: holePos.y,
     };
 
