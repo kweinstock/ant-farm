@@ -3,14 +3,16 @@
 // uniform GROUND (createSurface fills the whole grid with it, and nothing
 // on the surface digs), so unlike nest-view.ts there's no per-tile
 // type/role lookup — one flat fill instead of a per-cell loop for the
-// ground itself, then the graveyard, food piles, corpses, the hole, and
-// ants filtered to where === "surface".
+// ground itself, then (PHASE 4) the trail layer, the graveyard, food
+// piles, corpses, the hole, and ants filtered to where === "surface".
 import { PILE_START_AMOUNT, inGraveyard } from "../../sim/world/surface";
 import type { ColonyState } from "../../sim/state";
 import type { Corpse } from "../../sim/corpses";
 import type { AntId } from "../../sim/ants/ant";
+import type { RenderOptions } from "../ui/view-switch";
 import { SURFACE_CELL_SIZE } from "../config";
 import { drawAnt, drawCorpse } from "./ants";
+import { renderTrail } from "./pheromone-layer";
 
 const GROUND_COLOR = "#c9b896";
 const HOLE_COLOR = "#1a1208";
@@ -29,7 +31,7 @@ const PILE_MIN_SCALE = 0.25;
 const GRAVEYARD_SHADE_FULL_COUNT = 15;
 const GRAVEYARD_MAX_FILL_ALPHA = 0.5;
 
-export function renderSurfaceView(ctx: CanvasRenderingContext2D, state: ColonyState): void {
+export function renderSurfaceView(ctx: CanvasRenderingContext2D, state: ColonyState, options: RenderOptions): void {
     const { surface } = state;
     const cellSize = SURFACE_CELL_SIZE;
 
@@ -53,6 +55,14 @@ export function renderSurfaceView(ctx: CanvasRenderingContext2D, state: ColonySt
         ctx.moveTo(0, pixelY);
         ctx.lineTo(surface.grid.width * cellSize, pixelY);
         ctx.stroke();
+    }
+
+    // PHASE 4: trail layer, right after grid lines and before anything
+    // else drawn on top — it needs to read as staining on the ground
+    // itself, not a layer floating above piles/corpses/ants. Gated on the
+    // visitor's toggle (ui/view-switch.ts); off by default.
+    if (options.showTrails) {
+        renderTrail(ctx, surface.trail, cellSize);
     }
 
     // Graveyard: filled proportionally to how many uncarried corpses

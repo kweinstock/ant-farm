@@ -8,9 +8,15 @@
 // or just a preference) — cycles split -> nest -> surface -> split and is
 // remembered in localStorage across reloads. config.ts's VIEW_LAYOUT picks
 // what a fresh visitor with no stored choice starts on.
+//
+// PHASE 4: a second, independent toggle for the trail heat-map
+// (render/pheromone-layer.ts). Same localStorage pattern as the view mode
+// above, but its own key and its own button — it's an orthogonal setting
+// (which layers show), not another position in the view-mode cycle.
 import { VIEW_LAYOUT } from "../config";
 
 const STORAGE_KEY = "ant-farm-view-mode";
+const TRAILS_STORAGE_KEY = "ant-farm-show-trails";
 
 type ViewName = "nest" | "surface";
 type Mode = "split" | ViewName;
@@ -47,6 +53,27 @@ function writeStoredMode(mode: Mode): void {
     } catch {
         // Losing the persisted choice isn't worth surfacing an error over.
     }
+}
+
+function readStoredShowTrails(): boolean | undefined {
+    try {
+        const stored = localStorage.getItem(TRAILS_STORAGE_KEY);
+        return stored === "true" || stored === "false" ? stored === "true" : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+function writeStoredShowTrails(value: boolean): void {
+    try {
+        localStorage.setItem(TRAILS_STORAGE_KEY, String(value));
+    } catch {
+        // Same as writeStoredMode above — not worth surfacing.
+    }
+}
+
+function trailsLabelFor(shown: boolean): string {
+    return shown ? "Hide trails" : "Show trails";
 }
 
 let stylesInjected = false;
@@ -86,6 +113,11 @@ function injectStyles(): void {
             font: 0.85rem sans-serif;
             color: #5a4a32;
         }
+        .ant-farm-view-controls {
+            display: flex;
+            flex-direction: row;
+            gap: 0.5rem;
+        }
         .ant-farm-view-toggle {
             font: 0.85rem sans-serif;
             padding: 0.25rem 0.6rem;
@@ -98,6 +130,18 @@ function injectStyles(): void {
 export type Views = {
     nestCanvas: HTMLCanvasElement;
     surfaceCanvas: HTMLCanvasElement;
+    renderOptions: RenderOptions;
+};
+
+// A live getter, not a plain boolean copied at mount time — render/engine.ts
+// reads options.showTrails fresh every animation frame, so this has to
+// reflect whatever the button was last clicked to, not a snapshot from
+// whenever mountViews happened to run. `readonly` from the consumer's side
+// (engine.ts can't assign to it); mountViews' own click handler is the only
+// thing that ever changes the underlying value, through its own closured
+// variable, not through this property.
+export type RenderOptions = {
+    readonly showTrails: boolean;
 };
 
 export function mountViews(container: HTMLElement): Views {
@@ -124,11 +168,19 @@ export function mountViews(container: HTMLElement): Views {
 
     wrapper.append(nestPane, surfacePane);
 
+    const controls = document.createElement("div");
+    controls.className = "ant-farm-view-controls";
+
     const toggle = document.createElement("button");
     toggle.className = "ant-farm-view-toggle";
     toggle.type = "button";
 
-    container.replaceChildren(wrapper, toggle);
+    const trailsToggle = document.createElement("button");
+    trailsToggle.className = "ant-farm-view-toggle";
+    trailsToggle.type = "button";
+
+    controls.append(toggle, trailsToggle);
+    container.replaceChildren(wrapper, controls);
 
     let mode: Mode = readStoredMode() ?? VIEW_LAYOUT;
 
@@ -146,5 +198,29 @@ export function mountViews(container: HTMLElement): Views {
 
     applyMode();
 
-    return { nestCanvas, surfaceCanvas };
+    // PHASE 4: defaults to OFF (readStoredShowTrails() ?? false) —
+    // pheromone-layer.ts's own header calls this an "optional toggle,"
+    // which I'm reading as opt-in rather than shown immediately. Flag if
+    // you'd rather a fresh visitor see the heat-map by default.
+    let showTrails = readStoredShowTrails() ?? false;
+
+    function applyTrailsToggle(): void {
+        trailsToggle.textContent = trailsLabelFor(showTrails);
+        writeStoredShowTrails(showTrails);
+    }
+
+    trailsToggle.addEventListener("click", () => {
+        showTrails = !showTrails;
+        applyTrailsToggle();
+    });
+
+    applyTrailsToggle();
+
+    const renderOptions: RenderOptions = {
+        get showTrails() {
+            return showTrails;
+        },
+    };
+
+    return { nestCanvas, surfaceCanvas, renderOptions };
 }

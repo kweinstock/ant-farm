@@ -16,6 +16,14 @@
 // from jobs.ts's copy of it — jobs.ts already imports this file at runtime
 // (pickUpFood etc.), so importing anything back at runtime would be a real
 // cycle. Two duplicated lines is cheaper than restructuring around that.
+//
+// PHASE 4: decideForager's surface-outbound branch gained two fallbacks
+// (trail, then memory) between "no visible pile" and giving up to wander —
+// decision 6's priority order. pickUpFood now also writes to ant.memory on
+// a successful pickup, and surfaceStep now also deposits a trail crumb
+// while hauling food home. Both new writes ride the same ActResult fields
+// (`ant`, `surface`) every handler here already returns — no new field on
+// ActResult was needed for this phase.
 import type { Ant, AntLocation } from "./ant";
 import type { Perception } from "./senses";
 import type { Action } from "./behavior";
@@ -23,6 +31,8 @@ import { HUNGER_THRESHOLD } from "./ant";
 import { wander, stepToward } from "./movement";
 import { takeFromPile } from "../world/surface";
 import { depositToStore } from "../world/resources";
+import { deposit, DEPOSIT_AMOUNT } from "../pheromones";
+import { rememberFoodSite } from "./memory";
 import { FORAGER_LOAD } from "../state";
 import type { ColonyState } from "../state";
 import type { Position } from "../world/grid";
@@ -49,6 +59,14 @@ export function decideForager(ant: Ant, perception: Perception): Action {
         return { type: "surfaceStep", target: perception.nearestFoodPilePos };
     }
 
+    if (perception.trailNeighbor !== undefined) {
+        return { type: "surfaceStep", target: perception.trailNeighbor };
+    }
+
+    if (perception.rememberedFoodPos !== undefined) {
+        return { type: "surfaceStep", target: perception.rememberedFoodPos };
+    }
+
     return { type: "surfaceWander" };
 }
 
@@ -62,8 +80,10 @@ export function pickUpFood(state: ColonyState, ant: Ant): ActResult {
 
     const { surface, taken } = takeFromPile(state.surface, pile.id, FORAGER_LOAD);
 
+    const memory = rememberFoodSite(ant.memory, pile.pos, state.simTime);
+
     return {
-        ant: { ...ant, carryingFood: taken },
+        ant: { ...ant, carryingFood: taken, memory },
         brood: state.brood,
         foodStore: state.foodStore,
         surface,
@@ -93,11 +113,15 @@ export function surfaceStep(state: ColonyState, ant: Ant, target: Position): Act
         ? state.corpses.map((corpse) => (corpse.carriedBy === ant.id ? { ...corpse, location } : corpse))
         : state.corpses;
 
+    const surface = ant.carryingFood > 0 && ant.location.where === "surface"
+        ? { ...state.surface, trail: deposit(state.surface.trail, ant.location.pos.x, ant.location.pos.y, DEPOSIT_AMOUNT) }
+        : state.surface;
+
     return {
         ant: { ...ant, location },
         brood: state.brood,
         foodStore: state.foodStore,
-        surface: state.surface,
+        surface,
         corpses,
         rngSeed: result.seed,
     };

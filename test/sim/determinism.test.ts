@@ -39,4 +39,20 @@ describe("simulation determinism", () => {
 
     expect(bigStep.state).toEqual(smallStepState);
   });
+
+  // 50 ticks is before the first worker ages into a forager (age 150), so the
+  // trail field, surface hazard roll, and food memory never fire in the check
+  // above. Run long enough to exercise all of Phase 4: foragers on trips,
+  // trail deposits + evaporation accumulating, hazard deaths on the surface.
+  // This is also the check that the MIN_TRAIL evaporation floor keeps the
+  // Float32Array byte-identical between one big step and many small ones.
+  it("stays identical through Phase 4 mechanics: 400 ticks, one call vs 400", () => {
+    const seed = 24680;
+    const big = step(createInitialState(seed), 400);
+
+    let small = createInitialState(seed);
+    for (let i = 0; i < 400; i++) small = step(small, 1).state;
+
+    expect(big.state).toEqual(small);
+  });
 });

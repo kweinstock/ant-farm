@@ -13,6 +13,8 @@ import { manhattanDistance, type Position } from "../world/grid";
 import type { ColonyState } from "../state";
 import type { BroodId } from "../colony/brood";
 import { corpseById } from "../corpses";
+import { strongestPassableNeighbor } from "../pheromones";
+import { bestRememberedSite } from "./memory";
 
 // How far (Manhattan tiles) a forager can "notice" a pile it hasn't already
 // reached. Without this, nearestPile's result would be visible from
@@ -34,6 +36,8 @@ export type Perception = {
     holePos: Position;
     onFoodPileId: FoodPileId | undefined;
     nearestFoodPilePos: Position | undefined;
+    trailNeighbor: Position | undefined;
+    rememberedFoodPos: Position | undefined;
     carrying: BroodId[];
     hungerRatio: number;
     eggsAvailableInQueenChamber: boolean;
@@ -41,9 +45,6 @@ export type Perception = {
     assignedCorpseBuried: boolean;
     carryingCorpse: boolean;
     onAssignedCorpse: boolean;
-    // This undertaker's assigned drop slot (spreads bodies across the
-    // graveyard's tiles — see world/surface.ts:graveyardSlot), and whether
-    // it's standing on it.
     graveyardPos: Position;
     atGraveyardSlot: boolean;
 };
@@ -75,6 +76,20 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
             nearestFoodPilePos = nearest.pos;
         }
     }
+
+    // trail-following and memory, both surface-only — a nest-side
+    // ant has no surface.trail to read and never accumulates foodSites in
+    // the first place (rememberFoodSite is only ever called from
+    // foraging.ts's surface-side pickUpFood handler).
+    // Follow the trail OUTBOUND only (away from the hole) — see
+    // strongestPassableNeighbor's comment on why a plain gradient-follow
+    // pulls foragers back toward the nest.
+    const trailNeighbor = where === "surface"
+        ? strongestPassableNeighbor(state.surface.trail, state.surface.grid, pos.x, pos.y, state.surface.holePos)
+        : undefined;
+    const rememberedFoodPos = where === "surface"
+        ? bestRememberedSite(ant.memory, state.simTime)
+        : undefined;
 
     // "Available" means: still an EGG, physically still sitting in the
     // QUEEN chamber, and not already claimed by a nurse. Nest-only in
@@ -117,6 +132,8 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
         holePos,
         onFoodPileId,
         nearestFoodPilePos,
+        trailNeighbor,
+        rememberedFoodPos,
         carrying: ant.carrying,
         hungerRatio: ant.energy / MAX_ENERGY,
         eggsAvailableInQueenChamber,

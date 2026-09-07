@@ -25,20 +25,30 @@
 //                                                            the undertaker round trip (moveToNestPoint/
 //                                                            pickUpCorpse/dropCorpse/clearUndertaking) —
 //                                                            act() branches internally on ant.location.where
-//                                                            and ant.undertaking
+//                                                            and ant.undertaking. A forager's first
+//                                                            nest->surface crossExit this tick also emits
+//                                                            ForageDepartEvent (see below).
 //   5. colony processes                   (colony/*)        queen laying, brood development, caste fate, nuptial flights
-//   6. lifecycle resolution               (ants/lifecycle.ts) aging, starvation, death, job reassignment —
-//                                                            a death (worker OR queen) also drops a Corpse
-//                                                            into state.corpses at this point (see below);
-//                                                            if the dead ant was mid-haul as an undertaker,
-//                                                            the corpse it was carrying is released
-//                                                            (carriedBy cleared) rather than lost
-//   7. world upkeep                       (world/surface.ts, spawnFoodPiles, ageFoodPiles, ageCorpses — renamed
-//                                          corpses.ts)        from "surface world step": corpses aren't
-//                                                            surface-only (most die and decay underground),
-//                                                            so aging them alongside the surface's own
-//                                                            spawn/decay step is bookkeeping, not a surface
-//                                                            concern specifically
+//   6. lifecycle resolution               (ants/lifecycle.ts, this file) aging, starvation, old-age death,
+//                                                            job reassignment, PLUS (PHASE 4) a per-tick
+//                                                            surface hazard roll (SURFACE_DEATH_CHANCE) for
+//                                                            any worker still alive and standing on the
+//                                                            surface after ageAndMeter — ageAndMeter itself
+//                                                            stays RNG-free (ants/lifecycle.ts), so this
+//                                                            file rolls that second way to die itself and
+//                                                            threads the seed. Either death path drops a
+//                                                            Corpse into state.corpses at this point; if the
+//                                                            dead ant was mid-haul as an undertaker, the
+//                                                            corpse it was carrying is released (carriedBy
+//                                                            cleared) rather than lost. DeathEvent now
+//                                                            records `where` the ant died.
+//   7. world upkeep                       (world/surface.ts spawnFoodPiles/ageFoodPiles, corpses.ts
+//                                                            ageCorpses, pheromones.ts evaporate) — renamed
+//                                                            from "surface world step": neither corpses nor
+//                                                            (now) the trail are surface-only concerns
+//                                                            specifically, they just happen to live on
+//                                                            state.surface/state.corpses and age/decay on
+//                                                            their own schedules alongside piles
 //   8. genetics + lineage bookkeeping     (genetics/*)      offspring traits, family-tree edges, extinction marks
 //   9. collect + return events
 //
@@ -64,14 +74,35 @@ import { tickQueen } from "./colony/queen";
 import { advanceBrood } from "./colony/brood";
 import { spawnFoodPiles, ageFoodPiles } from "./world/surface";
 import { createCorpse, ageCorpses, assignUndertakers } from "./corpses";
+import { evaporate } from "./pheromones";
+import { rng } from "./rng";
 import type { ColonyState } from "./state";
 import type { AntId } from "./ants/ant";
+
+// UNTUNED STARTING POINT, same spirit as world/surface.ts's/pheromones.ts's
+// own constants. Consumed only here, so it lives here rather than in
+// params.ts — params.ts is still an untouched stub (see the Phase 4
+// context-refresh discussion); if it ever becomes real, this is a candidate
+// to move there along with pheromones.ts's constants, but nothing about
+// this phase forces that now. Per-tick background hazard for a worker on the
+// surface — predation, weather, etc. folded into one number until Phase 5's
+// environment/hazards.ts splits them out. Scaled by WANDER_EXPOSURE when the
+// ant is wandering lost (surfaceWander action) vs. moving with purpose: an
+// ant zig-zagging in the open is more exposed than one on a beeline. This
+// gives wandering a real cost (so trails/memory are worth using) but note it
+// does NOT make deaths-per-trip trend down measurably — trip length is driven
+// by where piles randomly spawn, not navigation quality. What Phase 4's
+// learning actually improves is food delivered per trip (recruitment); that's
+// what learning.test.ts measures.
+const SURFACE_DEATH_CHANCE = 0.0004;
+const WANDER_EXPOSURE = 2.5;
 
 
 export type DeathEvent = {
     kind: "death";
     antId: AntId;
     ageTicks: number;
+    where: "nest" | "surface";
 };
 
 export type BirthEvent = {
@@ -80,17 +111,41 @@ export type BirthEvent = {
     ageTicks: number;
 };
 
-export type SimEvent = DeathEvent | BirthEvent;
+export type ForageDepartEvent = {
+    kind: "forageDepart";
+    antId: AntId;
+};
+
+export type SimEvent = DeathEvent | BirthEvent | ForageDepartEvent;
 
 type TickResult = {
     state: ColonyState;
     events: SimEvent[];
 };
 
-function recordDeath(corpses: ColonyState["corpses"], nextCorpseId: number, deadAnt: Parameters<typeof createCorpse>[0]): {corpses: ColonyState["corpses"]; nextCorpseId: number} {
+function recordDeath(corpses: ColonyState["corpses"], nextCorpseId: number, deadAnt: Parameters<typeof createCorpse>[0]): { corpses: ColonyState["corpses"]; nextCorpseId: number } {
     const withNewCorpse = [...corpses, createCorpse(deadAnt, `corpse-${nextCorpseId}`)];
-    const released = withNewCorpse.some((corpse) => corpse.carriedBy === deadAnt.id) ? withNewCorpse.map((corpse) => corpse.carriedBy === deadAnt.id ? { ...corpse, carriedBy: undefined } : corpse) : withNewCorpse;
+
+    const released = withNewCorpse.some((corpse) => corpse.carriedBy === deadAnt.id)
+        ? withNewCorpse.map((corpse) => corpse.carriedBy === deadAnt.id ? { ...corpse, carriedBy: undefined } : corpse)
+        : withNewCorpse;
+
     return { corpses: released, nextCorpseId: nextCorpseId + 1 };
+}
+
+// Remove a dead worker: drop it from state.ants, leave a corpse, push the
+// DeathEvent. Shared by the two ways a worker dies in the loop below
+// (ageAndMeter's age/starvation, and the surface hazard roll).
+function killWorker(
+    cs: ColonyState,
+    dead: Parameters<typeof recordDeath>[2],
+    events: SimEvent[]
+): ColonyState {
+    const nextAnts = new Map(cs.ants);
+    nextAnts.delete(dead.id);
+    const { corpses, nextCorpseId } = recordDeath(cs.corpses, cs.nextCorpseId, dead);
+    events.push({ kind: "death", antId: dead.id, ageTicks: dead.ageTicks, where: dead.location.where });
+    return { ...cs, ants: nextAnts, corpses, nextCorpseId };
 }
 
 function singleTick(state: ColonyState): TickResult {
@@ -109,23 +164,43 @@ function singleTick(state: ColonyState): TickResult {
         .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
     for (const worker of workers) {
-        const {ant: metered, isDead} = ageAndMeter(worker);
-        
-        if (isDead) {
-            const nextAnts = new Map(currentState.ants);
-            nextAnts.delete(metered.id);
+        const {ant: metered, isDead: agedDead} = ageAndMeter(worker);
 
-            const { corpses, nextCorpseId } = recordDeath(currentState.corpses, currentState.nextCorpseId, metered);
-
-            currentState = {...currentState, ants: nextAnts, corpses, nextCorpseId};
-
-            events.push({kind: "death", antId: metered.id, ageTicks: metered.ageTicks});
+        if (agedDead) {
+            currentState = killWorker(currentState, metered, events);
             continue;
         }
 
         const perception = perceive(currentState, metered);
         const action = decide(metered, perception);
+
+        // Surface hazard roll — AFTER the decision so exposure can scale with
+        // what the ant chose to do. Commit the roll's seed to currentState
+        // right away: a survivor goes on to act() below, which reads
+        // state.rngSeed. (A nest ant never rolls — the stream just doesn't
+        // advance for it, which is fine and deterministic given the fixed
+        // worker sort order.)
+        if (metered.location.where === "surface") {
+            const exposure = action.type === "surfaceWander" ? WANDER_EXPOSURE : 1;
+            const hazardRoll = rng(currentState.rngSeed);
+            currentState = { ...currentState, rngSeed: hazardRoll.seed };
+            if (hazardRoll.value < SURFACE_DEATH_CHANCE * exposure) {
+                currentState = killWorker(currentState, metered, events);
+                continue;
+            }
+        }
+
         const actResult = act(currentState, metered, action);
+
+        if (
+            action.type === "crossExit" &&
+            metered.undertaking === undefined &&
+            metered.job === "FORAGER" &&
+            metered.location.where === "nest" &&
+            actResult.ant.location.where === "surface"
+        ) {
+            events.push({ kind: "forageDepart", antId: metered.id });
+        }
 
         const nextAnts = new Map(currentState.ants);
         nextAnts.set(metered.id, actResult.ant);
@@ -157,6 +232,7 @@ function singleTick(state: ColonyState): TickResult {
                 kind: "death",
                 antId: currentState.queenId,
                 ageTicks: queenResult.queen.ageTicks,
+                where: queenResult.queen.location.where,
             });
         } else {
             nextAntsAfterQueen.set(currentState.queenId, queenResult.queen);
@@ -192,7 +268,8 @@ function singleTick(state: ColonyState): TickResult {
     };
 
     const spawnResult = spawnFoodPiles(currentState.surface, currentState.rngSeed);
-    const surface = ageFoodPiles(spawnResult.surface);
+    const surfaceAfterSpawn = ageFoodPiles(spawnResult.surface);
+    const surface = { ...surfaceAfterSpawn, trail: evaporate(surfaceAfterSpawn.trail) };
     const corpses = ageCorpses(currentState.corpses);
 
     return {

@@ -4,15 +4,25 @@
 // spaces (state.grid/state.nest vs state.surface) at independent cell sizes
 // (config.ts's CELL_SIZE vs SURFACE_CELL_SIZE) — there's no shared
 // coordinate math between them, they just share one animation-frame cadence.
+//
+// PHASE 4: also threads renderOptions (ui/view-switch.ts) through to
+// renderSurfaceView every frame, not just once at loop start — the visitor
+// can flip the Trails toggle at any time, and renderOptions.showTrails is a
+// live getter (view-switch.ts's own comment) specifically so this loop
+// picks up that change on its very next frame rather than needing a restart.
+// Nest-side gets nothing here: the trail layer is surface-only this phase
+// (decision 1), so renderNestView's signature is untouched.
 import type { ColonyState } from "../../sim/state";
 import { CELL_SIZE, SURFACE_CELL_SIZE } from "../config";
 import { renderNestView } from "./nest-view";
 import { renderSurfaceView } from "./surface-view";
+import type { RenderOptions } from "../ui/view-switch";
 
 export function startRenderLoop(
     nestCanvas: HTMLCanvasElement,
     surfaceCanvas: HTMLCanvasElement,
     getState: () => ColonyState,
+    renderOptions: RenderOptions,
 ): void {
     const nestContext = nestCanvas.getContext("2d");
     const surfaceContext = surfaceCanvas.getContext("2d");
@@ -36,7 +46,7 @@ export function startRenderLoop(
         surfaceCtx.clearRect(0, 0, surfaceCanvas.width, surfaceCanvas.height);
 
         renderNestView(nestCtx, state);
-        renderSurfaceView(surfaceCtx, state);
+        renderSurfaceView(surfaceCtx, state, renderOptions);
 
         requestAnimationFrame(render);
     }

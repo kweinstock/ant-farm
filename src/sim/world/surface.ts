@@ -16,6 +16,7 @@
 // (state.ts -> surface.ts) and no cycle.
 import { createGrid, manhattanDistance, TILE, type Grid, type Position } from "./grid";
 import { randomInt } from "../rng";
+import { createTrailField, type TrailField } from "../pheromones";
 
 export const SURFACE_WIDTH = 40;
 export const SURFACE_HEIGHT = 28;
@@ -72,6 +73,7 @@ export type Surface = {
     graveyard: Rect;
     foodPiles: FoodPile[];
     nextPileId: number;
+    trail: TrailField;
 };
 
 function inRect(pos: Position, rect: Rect): boolean {
@@ -169,6 +171,7 @@ export function createSurface(width: number, height: number): Surface {
         graveyard,
         foodPiles: [],
         nextPileId: 1,
+        trail: createTrailField(width, height),
     };
 }
 
