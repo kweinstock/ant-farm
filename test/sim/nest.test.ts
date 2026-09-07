@@ -66,9 +66,25 @@ describe("starter nest", () => {
         }
     });
 
-    it("a role's own tiles sit at distance 0 in its field", () => {
+    it("a role's own tiles sit at distance 0 — except EXIT, which seeds from the mouth only", () => {
         for (const role of ROLES) {
             const field = nest.distanceFields[role];
+
+            if (role === "EXIT") {
+                // The EXIT field is seeded from just the top-of-shaft tile
+                // (so a forager descending it lands exactly on the tile
+                // crossExit checks). The other shaft tiles are 1, 2 steps
+                // away, not 0.
+                const tiles = tilesOf(nest, "EXIT");
+                const mouth = tiles.reduce((a, b) => (b.y < a.y ? b : a));
+                expect(field[getIndex(grid, mouth.x, mouth.y)]).toBe(0);
+                const nonMouthZero = tiles.some(
+                    (t) => (t.x !== mouth.x || t.y !== mouth.y) && field[getIndex(grid, t.x, t.y)] === 0
+                );
+                expect(nonMouthZero).toBe(false);
+                continue;
+            }
+
             for (const tile of tilesOf(nest, role)) {
                 expect(field[getIndex(grid, tile.x, tile.y)]).toBe(0);
             }

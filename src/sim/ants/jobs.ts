@@ -4,7 +4,6 @@
 // position on the Ant — Ant.carrying is just "which broodIds am I holding,"
 // a marker for behavior.ts/senses.ts to read, never a second copy of where
 // those eggs physically are.
-
 import type { Ant, Job } from "./ant";
 import { MAX_ENERGY } from "./ant";
 import type { Action } from "./behavior";
@@ -12,22 +11,18 @@ import { wander, moveToward } from "./movement";
 import { chamberAt, tilesOf } from "../world/nest";
 import type { ColonyState } from "../state";
 import type { Brood } from "../colony/brood";
+import type { Surface } from "../world/surface";
 import { eatFromStore } from "../world/resources";
+import { crossExit, pickUpFood, depositFood, surfaceStep, surfaceWander } from "./foraging";
 
-
-
-// Per-tile nursery capacity — distinct from behavior.ts's NURSE_EGG_CAPACITY
-// (per-nurse) even though both happen to be 3 today. Keeping them separate
-// constants means changing one doesn't silently change the other if they
-// ever need to diverge.
 export const NURSERY_TILE_CAPACITY = 3;
-
 export const NURSE_AGE_THRESHOLD_TICKS = 150;
 
 export type ActResult = {
     ant: Ant;
     brood: Brood[];
     foodStore: { amount: number; capacity: number };
+    surface: Surface;
     rngSeed: number;
 };
 
@@ -35,15 +30,8 @@ export function act(state: ColonyState, ant: Ant, action: Action): ActResult {
     switch (action.type) {
         case "goto": {
             const distanceField = state.nest.distanceFields[action.role];
-            const result = moveToward(state.grid, distanceField, ant.position, state.rngSeed);
+            const result = moveToward(state.grid, distanceField, ant.location.pos, state.rngSeed);
 
-            // Whoever moves the nurse writes the same new position onto
-            // every egg she's currently holding, in this same step — that's
-            // what keeps a carried egg's Brood.position from ever diverging
-            // from the ant carrying it. Only relevant here: an ant carrying
-            // anything always resolves to "goto" or "placeEgg" per
-            // behavior.ts's rule 1, never "mill," so no equivalent sync is
-            // needed in the mill branch below.
             const brood =
                 ant.carrying.length > 0
                     ? state.brood.map((entry) =>
@@ -52,20 +40,22 @@ export function act(state: ColonyState, ant: Ant, action: Action): ActResult {
                     : state.brood;
 
             return {
-                ant: { ...ant, position: result.position },
+                ant: { ...ant, location: { where: "nest", pos: result.position } },
                 brood,
                 foodStore: state.foodStore,
+                surface: state.surface,
                 rngSeed: result.seed,
             };
         }
 
         case "mill": {
-            const result = wander(state.grid, ant.position, state.rngSeed);
+            const result = wander(state.grid, ant.location.pos, state.rngSeed);
 
             return {
-                ant: { ...ant, position: result.position },
+                ant: { ...ant, location: { where: "nest", pos: result.position } },
                 brood: state.brood,
                 foodStore: state.foodStore,
+                surface: state.surface,
                 rngSeed: result.seed,
             };
         }
@@ -79,11 +69,7 @@ export function act(state: ColonyState, ant: Ant, action: Action): ActResult {
             );
 
             if (!egg) {
-                // Perception said an egg was available; if another nurse
-                // claimed it earlier in this same tick's per-ant loop, this
-                // nurse just does nothing rather than crashing on a missing
-                // egg.
-                return { ant, brood: state.brood, foodStore: state.foodStore, rngSeed: state.rngSeed };
+                return { ant, brood: state.brood, foodStore: state.foodStore, surface: state.surface, rngSeed: state.rngSeed };
             }
 
             const brood = state.brood.map((entry) =>
@@ -94,24 +80,18 @@ export function act(state: ColonyState, ant: Ant, action: Action): ActResult {
                 ant: { ...ant, carrying: [...ant.carrying, egg.id] },
                 brood,
                 foodStore: state.foodStore,
+                surface: state.surface,
                 rngSeed: state.rngSeed,
             };
         }
 
         case "placeEgg": {
             if (ant.carrying.length === 0) {
-                // decide() shouldn't produce placeEgg for an ant carrying
-                // nothing, but a no-op is the safe response to that
-                // invariant being violated, not a crash on ant.carrying[0].
-                return { ant, brood: state.brood, foodStore: state.foodStore, rngSeed: state.rngSeed };
+                return { ant, brood: state.brood, foodStore: state.foodStore, surface: state.surface, rngSeed: state.rngSeed };
             }
 
             const eggId = ant.carrying[0];
 
-            // Count only PLACED eggs (carriedBy === undefined). A carried
-            // egg's position is synced to its nurse each tick, so a nurse
-            // standing in the nursery would otherwise make her own carried
-            // egg count against the tile she's about to place it on.
             const occupancy = new Map<string, number>();
             for (const entry of state.brood) {
                 if (entry.carriedBy === undefined && chamberAt(state.nest, entry.position) === "NURSERY") {
@@ -125,11 +105,7 @@ export function act(state: ColonyState, ant: Ant, action: Action): ActResult {
             );
 
             if (!freeTile) {
-                // Every nursery tile full — the nurse just keeps holding the
-                // egg. This IS the real brood ceiling now (replacing Phase
-                // 3's MAX_BROOD constant, which queen.ts can drop), not a
-                // bug: growth stalls until a pupa ecloses and frees a slot.
-                return { ant, brood: state.brood, foodStore: state.foodStore, rngSeed: state.rngSeed };
+                return { ant, brood: state.brood, foodStore: state.foodStore, surface: state.surface, rngSeed: state.rngSeed };
             }
 
             const brood = state.brood.map((entry) =>
@@ -140,20 +116,37 @@ export function act(state: ColonyState, ant: Ant, action: Action): ActResult {
                 ant: { ...ant, carrying: ant.carrying.filter((id) => id !== eggId) },
                 brood,
                 foodStore: state.foodStore,
+                surface: state.surface,
                 rngSeed: state.rngSeed,
             };
         }
 
         case "eat": {
-            const {store, consumed} = eatFromStore(state.foodStore);
+            const { store, consumed } = eatFromStore(state.foodStore);
 
             return {
                 ant: { ...ant, energy: Math.min(ant.energy + consumed, MAX_ENERGY) },
                 brood: state.brood,
                 foodStore: store,
+                surface: state.surface,
                 rngSeed: state.rngSeed,
             };
         }
+
+        case "crossExit":
+            return crossExit(state, ant);
+
+        case "pickUpFood":
+            return pickUpFood(state, ant);
+
+        case "depositFood":
+            return depositFood(state, ant);
+
+        case "surfaceStep":
+            return surfaceStep(state, ant, action.target);
+
+        case "surfaceWander":
+            return surfaceWander(state, ant);
     }
 }
 

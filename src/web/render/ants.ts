@@ -1,48 +1,49 @@
-// Phase 3a: one dot per ant, sized/colored by caste as before. New this
-// phase — a nurse currently carrying eggs (ant.carrying.length > 0) gets a
-// small light dot drawn just above it, standing in for the egg(s) in transit
-// (see render/brood.ts, which deliberately skips rendering carried entries
-// at their own position to avoid assuming Brood.position tracks the ant
-// mid-carry).
-import type { ColonyState } from "../../sim/state";
+// Shared by both views (render/nest-view.ts, render/surface-view.ts) — each
+// filters state.ants by ant.location.where itself and calls this once per
+// ant it owns. cellSize is a parameter, not a module constant, because the
+// two views scale differently (config.ts's CELL_SIZE vs
+// SURFACE_CELL_SIZE) — one drawAnt serves both without duplicating the
+// caste-radius/color logic per view.
 import type { Ant } from "../../sim/ants/ant";
-import { CELL_SIZE } from "../config";
 
-const WORKER_RADIUS = CELL_SIZE * 0.3;
-const QUEEN_RADIUS = CELL_SIZE * 0.45;
+const WORKER_RADIUS_RATIO = 0.3;
+const QUEEN_RADIUS_RATIO = 0.45;
 const WORKER_COLOR = "#2b2118";
 const QUEEN_COLOR = "#8a1c3b";
-const CARRY_DOT_RADIUS = CELL_SIZE * 0.09;
-const CARRY_DOT_COLOR = "#fbf1d0";
+const CARRY_DOT_RADIUS_RATIO = 0.09;
+const EGG_CARRY_DOT_COLOR = "#fbf1d0";
+const FOOD_CARRY_DOT_COLOR = "#5c8a3a";
 
-export function renderAnts(ctx: CanvasRenderingContext2D, state: ColonyState): void {
-    // Draw order here is whatever Map iteration happens to give — unlike
-    // index.ts's per-ant sim loop, nothing about rendering is part of the
-    // determinism contract, so there's no need to sort by id. Worst case
-    // with overlapping ants, which one paints on top is cosmetic, not a
-    // simulation outcome.
-    for (const ant of state.ants.values()) {
-        drawAnt(ctx, ant);
-    }
-}
-
-export function drawAnt(ctx: CanvasRenderingContext2D, ant: Ant): void {
+export function drawAnt(ctx: CanvasRenderingContext2D, ant: Ant, cellSize: number): void {
     const isQueen = ant.caste === "QUEEN";
+    const pos = ant.location.pos;
 
-    const centerX = ant.position.x * CELL_SIZE + CELL_SIZE / 2;
-    const centerY = ant.position.y * CELL_SIZE + CELL_SIZE / 2;
-    const radius = isQueen ? QUEEN_RADIUS : WORKER_RADIUS;
+    const centerX = pos.x * cellSize + cellSize / 2;
+    const centerY = pos.y * cellSize + cellSize / 2;
+    const radius = cellSize * (isQueen ? QUEEN_RADIUS_RATIO : WORKER_RADIUS_RATIO);
 
     ctx.fillStyle = isQueen ? QUEEN_COLOR : WORKER_COLOR;
-
     ctx.beginPath();
     ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
     ctx.fill();
 
+    const carryDotRadius = cellSize * CARRY_DOT_RADIUS_RATIO;
+    const carryDotY = centerY - radius - carryDotRadius;
+
+    // Independent checks, not if/else — a forager never carries eggs and a
+    // nurse never carries food (ant.ts's carrying/carryingFood comment), so
+    // in practice at most one ever fires, but nothing here assumes that.
     if (ant.carrying.length > 0) {
-        ctx.fillStyle = CARRY_DOT_COLOR;
+        ctx.fillStyle = EGG_CARRY_DOT_COLOR;
         ctx.beginPath();
-        ctx.arc(centerX, centerY - radius - CARRY_DOT_RADIUS, CARRY_DOT_RADIUS, 0, Math.PI * 2);
+        ctx.arc(centerX, carryDotY, carryDotRadius, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    if (ant.carryingFood > 0) {
+        ctx.fillStyle = FOOD_CARRY_DOT_COLOR;
+        ctx.beginPath();
+        ctx.arc(centerX, carryDotY, carryDotRadius, 0, Math.PI * 2);
         ctx.fill();
     }
 }

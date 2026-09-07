@@ -6,7 +6,7 @@
 // per-tile distance fields already give movement everything it needs this
 // phase; build the graph only if a later phase wants higher-level routing
 // ("go through commons, avoid the nursery").
-import { createGrid, getIndex, passableNeighbors, setTile, TILE, type Grid, type Position } from "./grid";
+import { createGrid, getIndex, manhattanDistance, passableNeighbors, setTile, TILE, type Grid, type Position } from "./grid";
 
 export type ChamberRole = "QUEEN" | "NURSERY" | "FOOD_STORAGE" | "COMMONS" | "EXIT";
 
@@ -109,6 +109,30 @@ function tilesInSegment(segment: TunnelSegment): Position[] {
     return tiles;
 }
 
+// Shared by exitMouth (public, takes a real Nest) and createStarterNest
+// itself (which needs this same "topmost tile" logic on a Chamber it's
+// still assembling, before any Nest object exists to call exitMouth on).
+function shaftMouth(tiles: Position[]): Position {
+    let mouth = tiles[0] ?? {x: 0, y: 0};
+
+    for (const tile of tiles) {
+        if (tile.y < mouth.y) {
+            mouth = tile;
+        }
+    }
+
+    return mouth;
+}
+
+// The one tile foraging.ts's crossExit checks against — not "somewhere in
+// the EXIT chamber," but specifically the top of the shaft, since that's
+// the tile the EXIT distance field now seeds from (see the special case in
+// createStarterNest below) and the only tile a forager descending that
+// field will actually arrive at.
+export function exitMouth(nest: Nest): Position {
+    return shaftMouth(tilesOf(nest, "EXIT"));
+}
+
 export function createStarterNest(width: number, height: number): { grid: Grid; nest: Nest } {
     // The CHAMBER_DEFS / TUNNEL_SEGMENTS / EXIT_SHAFT rects are authored for
     // exactly GRID_WIDTH x GRID_HEIGHT. On a smaller grid, setTile's out-of-
@@ -153,7 +177,18 @@ export function createStarterNest(width: number, height: number): { grid: Grid; 
     // the same grid + chamber data, don't try to serialize a hidden cache).
     const distanceFields = {} as Record<ChamberRole, Int16Array>;
     for (const chamber of chambers) {
-        distanceFields[chamber.role] = distanceField(grid, chamber.tiles);
+        // EXIT is the one deliberate special case here. Every other chamber
+        // seeds its field from ALL of its own tiles (multi-source BFS:
+        // "distance to the nearest tile of this chamber") — but EXIT seeds
+        // from only the mouth tile. If it seeded from all three shaft tiles
+        // like everything else, the other two shaft tiles would ALSO read
+        // distance 0, and moveToward would happily consider the field
+        // "arrived" one or two tiles short of the actual mouth. 3b's
+        // crossExit action fires at exactly one tile (exitMouth), so
+        // "descend the EXIT field to distance 0" needs to land a forager
+        // there specifically, not anywhere in the shaft.
+        const seedTiles = chamber.role === "EXIT" ? [shaftMouth(chamber.tiles)] : chamber.tiles;
+        distanceFields[chamber.role] = distanceField(grid, seedTiles);
     }
 
     return {grid, nest: {chambers, distanceFields}};
@@ -178,10 +213,6 @@ export function chamberAt(nest: Nest, pos: Position): ChamberRole | undefined {
 export function tilesOf(nest: Nest, role: ChamberRole): Position[] {
     const chamber = nest.chambers.find((c) => c.role === role);
     return chamber ? chamber.tiles : [];
-}
-
-function manhattanDistance(a: Position, b: Position): number {
-    return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 }
 
 // Straight-line distance among a chamber's own tiles, NOT walking distance

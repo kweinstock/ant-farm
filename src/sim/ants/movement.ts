@@ -1,10 +1,14 @@
-// Locomotion: undirected wander, and goal-directed movement along a
-// precomputed distance field (world/nest.ts). Both functions take `grid` and
-// route every move through passability — that's the one thing this file
-// should never skip, now that most of the world is solid, impassable SOIL.
+// Locomotion: undirected wander, goal-directed movement along a precomputed
+// distance field (world/nest.ts, nest-side only), and PHASE 3b's stepToward
+// — a greedy step toward an arbitrary target point, for the surface, which
+// has no distance field at all (see world/surface.ts's header: the surface
+// is obstacle-free, so a greedy Manhattan step is always optimal, and
+// precomputing a field for it would be pure overhead). All three route
+// through passableNeighbors, which now returns GROUND tiles too — nothing
+// here needs to know or care which grid it's called on.
 
 import { rng, randomInt } from "../rng";
-import { getIndex, passableNeighbors, type Grid, type Position } from "../world/grid";
+import { getIndex, manhattanDistance, passableNeighbors, type Grid, type Position } from "../world/grid";
 
 // 20% of the time, ignore the gradient and wander among ALL passable
 // neighbors instead of stepping toward the target. That's the noise that
@@ -68,6 +72,34 @@ export function moveToward(grid: Grid, distanceField: Int16Array, position: Posi
     // Two RNG draws, threaded in sequence: first decides gradient-following
     // vs. noise, second picks uniformly among whichever candidate set that
     // decision landed on.
+    const noiseRoll = rng(rngSeed);
+    const useNoise = noiseRoll.value < NOISE_PROBABILITY;
+    const candidates = useNoise ? neighbors : bestNeighbors;
+
+    const pick = randomInt(noiseRoll.seed, 0, candidates.length - 1);
+
+    return {
+        position: candidates[pick.value],
+        seed: pick.seed,
+    };
+}
+
+
+export function stepToward(grid: Grid, pos: Position, target: Position, rngSeed: number): {position: Position, seed: number} {
+    if (pos.x === target.x && pos.y === target.y) {
+        return wander(grid, pos, rngSeed);
+    }
+
+    const neighbors = passableNeighbors(grid, pos.x, pos.y);
+
+    if (neighbors.length === 0) {
+        return {position: pos, seed: rngSeed};
+    }
+
+    const neighborDistances = neighbors.map((neighbor) => manhattanDistance(neighbor, target));
+    const minDistance = Math.min(...neighborDistances);
+    const bestNeighbors = neighbors.filter((_, i) => neighborDistances[i] === minDistance);
+
     const noiseRoll = rng(rngSeed);
     const useNoise = noiseRoll.value < NOISE_PROBABILITY;
     const candidates = useNoise ? neighbors : bestNeighbors;

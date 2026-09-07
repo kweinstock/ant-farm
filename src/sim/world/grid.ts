@@ -21,6 +21,7 @@ export const TILE = {
     CHAMBER: 2,
     WALL: 3,
     EXIT: 4,
+    GROUND: 5,
 } as const;
 
 export type TileType = (typeof TILE)[keyof typeof TILE]
@@ -86,9 +87,18 @@ export function isPassable(grid: Grid, x: number, y: number): boolean {
     }
 
     const tile = tileAt(grid, x, y);
-    return tile === TILE.TUNNEL || tile === TILE.CHAMBER || tile ===  TILE.EXIT;
+    return tile === TILE.TUNNEL || tile === TILE.CHAMBER || tile ===  TILE.EXIT || tile === TILE.GROUND;
 }
 
+
+// Shared by anything scoring candidate tiles by proximity — movement.ts's
+// stepToward, world/nest.ts's nearestTileOf, world/surface.ts's
+// nearestPile, ants/senses.ts's sight-radius check. One copy instead of
+// four near-identical ones was starting to drift risk for zero reason —
+// this is pure arithmetic, not something that should ever vary by caller.
+export function manhattanDistance(a: Position, b: Position): number {
+    return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+}
 
 // 4-directional only — deliberately matches rng.ts's DIRECTIONS_4, not
 // DIRECTIONS_8. index.ts calls randomDirection(seed, false) to stay in sync;

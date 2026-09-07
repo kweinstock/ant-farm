@@ -55,11 +55,12 @@ export function tickQueen(state: ColonyState): QueenTickResult {
     const population = Math.max(state.ants.size, 1);
     const populationFactor = POPULATION_SOFT_TARGET / Math.max(population, POPULATION_SOFT_TARGET);
 
-    // PHASE 3a: no foodFactor. The single-number foodStore is a placeholder
-    // (world/resources.ts) with a passive regen — it isn't a real economy
-    // until 3b's foragers stock it from actual trips, so it shouldn't gate
-    // laying yet. Phase 4 restores `foodFactor` here (foodStore.amount /
-    // population / FOOD_REFERENCE_PER_ANT, clamped to 1) once that's true.
+    // Still no foodFactor. It's a real forager-stocked economy as of 3b, but
+    // the 10k probe showed the store sits near-full (foragers out-deliver
+    // consumption) and the colony stays bounded on populationFactor alone —
+    // adding a lay-rate brake now would just destabilise a working balance
+    // for no benefit. Phase 4 revisits it, where weather/season give a
+    // foodFactor something real to respond to.
     const layProbability = BASE_LAY_PROBABILITY * populationFactor;
 
     // Roll unconditionally (keeps the RNG cadence identical whether or not the

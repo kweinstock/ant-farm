@@ -15,24 +15,32 @@
 //   1. apply queued visitor inputs        (inputs.ts)
 //   2. advance environment                (environment/*)  clock, season, weather, temperature, hazards
 //   3. pheromone diffuse + evaporate      (pheromones.ts)
-//   4. sense -> decide -> move-toward-chamber / act-in-chamber (ants/*)
+//   4. sense -> decide -> act, per worker (ants/*)          nest-side goto/mill/pickUpEgg/placeEgg/eat,
+//                                                            or surface-side crossExit/pickUpFood/
+//                                                            depositFood/surfaceStep/surfaceWander —
+//                                                            act() branches internally on ant.location.where
 //   5. colony processes                   (colony/*)        queen laying, brood development, caste fate, nuptial flights
 //   6. lifecycle resolution               (ants/lifecycle.ts) aging, starvation, death, job reassignment
-//   7. genetics + lineage bookkeeping     (genetics/*)      offspring traits, family-tree edges, extinction marks
-//   8. collect + return events
+//   7. surface world step                 (world/surface.ts) spawnFoodPiles, ageFoodPiles — replaces the
+//                                                            deleted regenFoodStore; foragers are now the
+//                                                            only inflow to foodStore, this just governs
+//                                                            what's out there for them to find
+//   8. genetics + lineage bookkeeping     (genetics/*)      offspring traits, family-tree edges, extinction marks
+//   9. collect + return events
 //
-// PHASE 3a NOTE: steps 1-3 and 7 still don't exist. Steps 4 and 6 stay
-// combined into one per-worker loop below, for the same reason as before
-// (see ants/lifecycle.ts) — nothing yet needs a completed pass over all ants
-// before resolving deaths. The queen is still not part of that loop; she's
-// handled entirely by colony/queen.ts's tickQueen, as part of step 5.
+// PHASE 3b NOTE: steps 1-3 and 8 still don't exist. Steps 4 and 6 stay
+// combined into one per-worker loop below, same reasoning as before —
+// nothing yet needs a completed pass over all ants before resolving deaths.
+// The queen is still not part of that loop; she's handled entirely by
+// colony/queen.ts's tickQueen, as part of step 5. She also never touches
+// the surface, so nothing about this phase's location split applies to her.
 import { ageAndMeter } from "./ants/lifecycle";
 import { perceive } from "./ants/senses";
 import { decide } from "./ants/behavior";
 import { act } from "./ants/jobs";
 import { tickQueen } from "./colony/queen";
 import { advanceBrood } from "./colony/brood";
-import { regenFoodStore } from "./world/resources";
+import { spawnFoodPiles, ageFoodPiles } from "./world/surface";
 import type { ColonyState } from "./state";
 import type { AntId } from "./ants/ant";
 
@@ -94,6 +102,7 @@ function singleTick(state: ColonyState): TickResult {
             ants: nextAnts,
             brood: actResult.brood,
             foodStore: actResult.foodStore,
+            surface: actResult.surface,
             rngSeed: actResult.rngSeed,
         };
     }
@@ -127,9 +136,6 @@ function singleTick(state: ColonyState): TickResult {
         };
     }
 
-    // advanceBrood's placement logic is unchanged — it just does less now
-    // (no tendedThisTick gate), since brood.ts moved the real bottleneck to
-    // whether an egg has been physically carried into the NURSERY.
     const broodResult = advanceBrood(currentState);
 
     const nextAntsAfterBrood = new Map(currentState.ants);
@@ -146,18 +152,25 @@ function singleTick(state: ColonyState): TickResult {
         rngSeed: broodResult.rngSeed,
     };
 
-    // Passive regen placeholder, replacing Phase 3's per-pile
-    // regrowFoodPiles — still doesn't belong in environment/* until seasons
-    // exist to scale it, still called directly here for the same reason as
-    // before.
-    const foodStore = regenFoodStore(currentState.foodStore);
+    // Surface world step: spawn, then age/decay. Order matches the pattern
+    // everywhere else in this file (the thing produced this tick is what
+    // the next step sees) — a pile spawned this tick starts at ageTicks: 0
+    // and immediately gets bumped to 1 by ageFoodPiles below, rather than
+    // sitting at 0 for a full extra tick before aging starts. Replaces the
+    // deleted regenFoodStore call from 3a — foodStore itself isn't touched
+    // here at all anymore; foragers depositing via jobs.ts's depositFood
+    // case, earlier in this same tick's worker loop, are the only thing
+    // that changes it now.
+    const spawnResult = spawnFoodPiles(currentState.surface, currentState.rngSeed);
+    const surface = ageFoodPiles(spawnResult.surface);
 
     return {
         state: {
             ...currentState,
             seq: currentState.seq + 1,
             simTime: currentState.simTime + 1,
-            foodStore,
+            surface,
+            rngSeed: spawnResult.seed,
         },
         events,
     };

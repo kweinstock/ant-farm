@@ -30,7 +30,9 @@ export type Brood = {
 
 export function layEgg(state: ColonyState): Brood {
     const queen = state.ants.get(state.queenId);
-    const position: Position = queen ? queen.position : {x: 0, y: 0};
+    // Queen is always in the nest, so location.pos is a nest tile — an egg is
+    // laid wherever she's standing (a QUEEN-chamber tile).
+    const position: Position = queen ? queen.location.pos : {x: 0, y: 0};
 
     return {
         id: `brood-${state.nextBroodId}`,

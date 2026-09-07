@@ -1,49 +1,45 @@
 // This file only draws — it never calls step() or otherwise changes state.
-// That boundary is deliberate and is the one thing in Phase 2 worth keeping
-// intact going forward: `getState` is a closure that reads whatever the
-// caller's current state variable holds *at draw time*, not a value handed
-// in once at startup. In Phase 2, main.ts's setInterval is what mutates that
-// variable. In Phase 6, net/socket.ts applying incoming Diffs will mutate it
-// instead — this function doesn't need to know or care which, so it survives
-// that swap completely unmodified.
+// PHASE 3b: two canvases, one rAF loop drives both. nest-view.ts and
+// surface-view.ts are independent draws against independent coordinate
+// spaces (state.grid/state.nest vs state.surface) at independent cell sizes
+// (config.ts's CELL_SIZE vs SURFACE_CELL_SIZE) — there's no shared
+// coordinate math between them, they just share one animation-frame cadence.
 import type { ColonyState } from "../../sim/state";
-import { CELL_SIZE } from "../config";
-import { renderGrid } from "./grid";
-import { renderResources } from "./resources";
-import { renderBrood } from "./brood";
-import { renderAnts } from "./ants";
+import { CELL_SIZE, SURFACE_CELL_SIZE } from "../config";
+import { renderNestView } from "./nest-view";
+import { renderSurfaceView } from "./surface-view";
 
-export function startRenderLoop(canvas: HTMLCanvasElement, getState: () => ColonyState,): void {
-  const context = canvas.getContext("2d");
+export function startRenderLoop(
+    nestCanvas: HTMLCanvasElement,
+    surfaceCanvas: HTMLCanvasElement,
+    getState: () => ColonyState,
+): void {
+    const nestContext = nestCanvas.getContext("2d");
+    const surfaceContext = surfaceCanvas.getContext("2d");
 
-  if (context === null) {
-    throw new Error("Could not get 2D canvas context");
-  }
+    if (nestContext === null || surfaceContext === null) {
+        throw new Error("Could not get 2D canvas context for one or both ant-farm views");
+    }
 
-  const ctx: CanvasRenderingContext2D = context;
+    const nestCtx: CanvasRenderingContext2D = nestContext;
+    const surfaceCtx: CanvasRenderingContext2D = surfaceContext;
 
-  function render(): void {
-    const state = getState();
+    function render(): void {
+        const state = getState();
 
-    // Re-derived and reassigned every frame even though the grid is static
-    // post-Phase-3a (no digging mechanic). Setting .width/.height clears the
-    // canvas as a side effect regardless of whether the value actually
-    // changed — wasteful but harmless at 24x16 (960x640). Hoist outside
-    // render() if the grid is ever confirmed to never resize mid-run.
-    canvas.width = state.grid.width * CELL_SIZE;
-    canvas.height = state.grid.height * CELL_SIZE;
+        nestCanvas.width = state.grid.width * CELL_SIZE;
+        nestCanvas.height = state.grid.height * CELL_SIZE;
+        surfaceCanvas.width = state.surface.grid.width * SURFACE_CELL_SIZE;
+        surfaceCanvas.height = state.surface.grid.height * SURFACE_CELL_SIZE;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+        nestCtx.clearRect(0, 0, nestCanvas.width, nestCanvas.height);
+        surfaceCtx.clearRect(0, 0, surfaceCanvas.width, surfaceCanvas.height);
 
-    // Painter's order, back to front: tiles, then food, then brood, then
-    // ants on top (an ant standing on food/brood should be visible).
-    renderGrid(ctx, state.grid, state.nest);
-    renderResources(ctx, state);
-    renderBrood(ctx, state);
-    renderAnts(ctx, state);
+        renderNestView(nestCtx, state);
+        renderSurfaceView(surfaceCtx, state);
+
+        requestAnimationFrame(render);
+    }
 
     requestAnimationFrame(render);
-  }
-
-  requestAnimationFrame(render);
 }
