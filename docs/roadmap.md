@@ -4,13 +4,19 @@ Incremental plan. Each phase ends with something you can **run and test**. The
 file tree in `architecture.md` is a reference map — create real files only as a
 phase needs them, and ignore (or delete) stubs you haven't reached.
 
-Cloudflare is not involved until **Phase 6**. Everything up to and including
-Phase 5 (Phases 3a–3c included) runs with `npm test` and `npm run dev` alone.
+Cloudflare is not involved until **Phase 13**. Everything up to and including
+Phase 12 (Phases 3a–3c included) runs with `npm test` and `npm run dev` alone.
 
 > **3a–3c were inserted after Phase 3 was built.** They turn the flat top-down
 > board into a real ant farm: a side-on cutaway nest with rooms, a separate
-> top-down surface for foraging, and corpse handling. Phase numbers 4+ are
-> unchanged so existing code comments that reference them still line up.
+> top-down surface for foraging, and corpse handling.
+
+> **Phases 6–12 were inserted after Phase 5 was built** — a bigger world,
+> deeper ant and predator behaviour, sleep, colony-level learning, and a full
+> visual overhaul, all still local-only. The original Cloudflare phases 6–10
+> shifted up to **13–17**. Code comments that reference "Phase 6"–"Phase 10"
+> for the Durable Object, streaming, persistence, visitor actions, or D1 mean
+> what are now Phases 13–17; they were not mass-edited.
 
 ---
 
@@ -254,13 +260,261 @@ filling faster as recruitment kicks in.
 
 **Run it:** browser cycles through day/night and seasons with visual changes.
 
-At the end of Phase 5 you have the **entire simulation**, fully tested, running
-locally in the browser. No Cloudflare yet. This is the natural place to spend
-time tuning `src/sim/params.ts`.
+At the end of Phase 5 you have a **complete first-pass simulation**, fully
+tested, running locally in the browser. Phases 6–12 deepen it — a bigger nest
+and surface, richer ant and predator behaviour, sleep, colony-level learning,
+and a full visual overhaul — still local-only, still `npm run dev`. Cloudflare
+starts at Phase 13. Tune `src/sim/params.ts` here after Phase 5, and again
+after Phase 11 once behaviour is settled.
 
 ---
 
-## Phase 6 — move the loop server-side (first Cloudflare step)
+## Phase 6 — the bigger nest
+
+Scale the nest up — not a flat 2×; enough room for real structure and, later,
+the colony digging more of its own. The layout stops being a fixed set of
+single rooms.
+
+- `src/sim/params.ts` — `GRID_WIDTH` / `GRID_HEIGHT` up substantially (a nest
+  that holds a few hundred ants without gridlock). One place, everything reads
+  from here already.
+- `src/sim/world/grid.ts` — tunnels are **2 tiles wide** everywhere; ants pass
+  each other instead of deadlocking a 1-wide corridor. `isPassable` unchanged;
+  the layout/dig code lays 2-wide runs.
+- `src/sim/world/nest.ts` — multi-room layout:
+  - **2–3 `NURSERY` chambers**, **2–3 `FOOD_STORE` chambers**, **4–5 `COMMONS`**
+    (each bigger than today's), and a **larger `QUEEN` chamber**.
+  - The `QUEEN` chamber sits **centrally** and deep, and is **not adjacent to a
+    nursery** — nurses walk a real distance from queen to nursery.
+  - Same-role chambers are interchangeable targets: nearest instance with a
+    free slot wins.
+  - Leave a wide margin of undug `SOIL` around the layout — Phase 11's
+    excavation needs somewhere to dig.
+- `src/sim/ants/movement.ts` — one BFS distance field **per chamber instance**,
+  not per role; job resolution picks the nearest instance then routes to it.
+- `src/sim/ants/jobs.ts` / `behavior.ts` — "go to `FOOD_STORE`" / "`NURSERY`"
+  now means the nearest non-full instance.
+- `src/sim/state.ts` — more starter workers to match the bigger nest.
+- `src/web/render/nest-view.ts` — draw the multi-chamber cutaway.
+
+**Test:**
+- `nest.test.ts` — still fully connected: every chamber instance reachable from
+  every other; every role's distance fields cover all passable tiles.
+- every tunnel run is ≥ 2 wide (no 1-tile pinch points).
+- an egg still reaches *a* nursery within N ticks; per-tile and per-nurse caps
+  hold across all nursery instances.
+- determinism holds.
+
+**Run it:** a visibly bigger colony — several nurseries and stores, wide
+tunnels, the queen isolated in a central chamber, ants spread across many
+commons.
+
+---
+
+## Phase 7 — surface ecology
+
+The surface stops being a uniform plane with purely random pile spawns.
+
+- `src/sim/params.ts` — `SURFACE_WIDTH` / `SURFACE_HEIGHT` up to match the
+  bigger nest and give foragers real ground to cover.
+- `src/sim/world/surface.ts`:
+  - **Fertile patches** — a handful of fixed regions where piles spawn far more
+    often and larger; the rest of the map spawns them rarely. `spawnFoodPiles`
+    rolls a patch first, then a tile within it.
+  - **Obstacles** — `ROCK` / `TREE` tiles, impassable, clustered in and around
+    the fertile patches (forage where the cover is).
+  - The **graveyard moves well away from the hole** — its own region, a real
+    walk for undertakers (and a target for Phase 10's predators).
+- `src/sim/ants/movement.ts` — surface movement was greedy-Manhattan on an open
+  grid; with obstacles it needs a step that doesn't walk into rocks (local
+  avoidance or a cached surface distance field to the hole / patches).
+- `src/sim/ants/foraging.ts` — outbound search biases toward known fertile
+  patches, not just remembered individual piles.
+- `src/web/render/surface-view.ts` — draw patches, rocks, trees, the relocated
+  graveyard.
+
+**Test:**
+- piles spawn overwhelmingly inside fertile patches over a long run; the open
+  map stays nearly bare.
+- no pile spawns on an obstacle tile; no ant ever occupies one.
+- undertakers still reach the relocated graveyard; determinism holds.
+
+**Run it:** foragers converge on green, tree-and-rock-studded patches; the
+graveyard is a distinct plot across the field.
+
+---
+
+## Phase 8 — queen life & brood care
+
+- `src/sim/colony/queen.ts` — the queen **gets hungry** (she metabolises now,
+  slowly) and signals it when low.
+- `src/sim/ants/foraging.ts` / `behavior.ts` — a returning forager with food
+  **delivers to a hungry queen before topping up `FOOD_STORE`** (trophallaxis).
+  Hungry-queen priority sits above normal store delivery in the decision order.
+- `src/sim/colony/queen.ts` / `movement.ts` — the queen **moves**, but only
+  within her chamber and at a fraction of a worker's speed (a step every N
+  ticks). Lay position follows her.
+- `src/sim/colony/brood.ts` — an egg/larva only advances its timer on ticks
+  when a **nurse is tending it**, and tending is **intermittent** — a nurse
+  services each assigned brood every M ticks, not every tick. Unattended brood
+  stalls, and past a longer limit dies.
+- `src/sim/ants/jobs.ts` — the `NURSE` job gains a tend-rotation over its
+  nursery's eggs, not just ferrying.
+
+**Test:**
+- a hungry queen is fed by the next forager back before the store rises.
+- the queen's position changes over time but never leaves her chamber.
+- too few nurses → brood development measurably slows / stalls; enough → matches
+  today's timings.
+- determinism holds.
+
+**Run it:** foragers peel off to the centre to feed the queen; an
+under-staffed nursery visibly lags.
+
+---
+
+## Phase 9 — sleep
+
+Every ant sleeps. Default target: **~250 short sleeps per day, ~1 minute each**
+(sim-scaled) — tune against `DAY_LENGTH_TICKS`.
+
+- `src/sim/params.ts` — `SLEEPS_PER_DAY`, `SLEEP_DURATION_TICKS`,
+  `QUEEN_SLEEP_MULT` (the queen sleeps longer, in longer blocks).
+- `src/sim/ants/ant.ts` — an ant gains a sleep state (asleep + wake tick, or a
+  running sleep-debt).
+- `src/sim/ants/behavior.ts` — an ant at its sleep threshold stops taking jobs
+  and rests where it is (or heads to a commons first); asleep = no move, no
+  forage, no tend, no haul. A forager finishes the trip home before sleeping,
+  never drops on the surface.
+- `src/sim/colony/queen.ts` — the queen sleeps too, longer, and doesn't lay
+  while asleep.
+- `src/sim/colony/demography.ts` / dashboard — an "asleep" count so tuning can
+  see the awake workforce.
+
+**Test:**
+- over a day, each ant's total sleep ≈ `SLEEPS_PER_DAY × SLEEP_DURATION_TICKS`
+  (within tolerance).
+- a sleeping ant's position and energy spend are static that tick; the colony
+  still functions with a realistic fraction asleep at any moment.
+- determinism holds.
+
+**Run it:** activity ebbs and flows over the day/night cycle; clusters of
+resting ants in the commons.
+
+---
+
+## Phase 10 — predators as roaming agents
+
+The Phase 5 "predator blinks in near the exit, blinks out" placeholder becomes
+a real agent.
+
+- `src/sim/environment/hazards.ts`:
+  - A predator **enters from a map edge and walks across to another edge**,
+    then leaves — no random despawn. The path can weave.
+  - **Vision** — it spots ants within a sight radius; a spotted ant is chased
+    and, on contact, **eaten** (`cause: "predator"`).
+  - **Graveyard attraction** — the corpse pile draws predators. Both
+    `PREDATOR_APPEAR_CHANCE` and path targeting scale with the **number of
+    bodies in the graveyard**; a big graveyard means frequent visitors nosing
+    around it.
+- `src/sim/pheromones.ts` — a second channel: **ALARM**. An ant that sees a
+  predator (or is chased) deposits alarm pheromone; it evaporates fast.
+- `src/sim/ants/behavior.ts` / `senses.ts` — an ant sensing a nearby predator
+  **or** strong alarm pheromone **flees** (drops its job, heads for the hole /
+  cover). Ants out of the predator's sight but on the alarm trail still divert.
+- `src/sim/index.ts` — chase / strike resolves in the worker loop like the
+  current roll, but gated on line-of-sight and range, not a flat radius chance.
+- `src/web/render/*` — draw the predator crossing the field; alarm pheromone as
+  its own (red) heat-map layer.
+
+**Test:**
+- a predator's track runs edge-to-edge; it never despawns mid-map.
+- an ant in the predator's vision is chased; an ant that sees it deposits alarm
+  and nearby ants divert.
+- predator frequency rises measurably with graveyard size (seed the graveyard,
+  compare visit rates).
+- determinism holds — vision, chase, and alarm are all seeded / pure.
+
+**Run it:** a predator prowls in from one edge, ants scatter ahead of it along
+a spreading red alarm trail, it noses the graveyard and exits the far side.
+
+---
+
+## Phase 11 — collective intelligence: teaching, decisions, digging
+
+The colony starts **changing its own layout and improving over time**.
+
+- `src/sim/colony/knowledge.ts` (new) / `src/sim/ants/memory.ts`:
+  - **Teaching** — when two ants meet in the nest, the one with better
+    knowledge (richer food-site memory, known predator routes, patch quality)
+    passes some of it to the other. Knowledge spreads without every ant
+    learning first-hand.
+  - **Per-ant improvement** — trip success / failure nudges an ant's own
+    weights (trust trails vs. memory vs. patches, how early to flee).
+- `src/sim/colony/decisions.ts` (new) — colony-level choices, re-evaluated
+  slowly, each a scored proposal against the current state; the colony commits
+  past a threshold, then ants act on it:
+  - **Relocate the graveyard** when predators keep hitting it.
+  - **Relocate / add a nursery or food store** — brood away from a cold or
+    flooded edge, a store nearer the hole.
+- `src/sim/world/nest.ts` / `grid.ts` — **excavation**: a `DIGGER` task turns
+  `SOIL` into `TUNNEL` / `CHAMBER` over many ant-ticks; new chambers get roles;
+  distance-field caches invalidate on dig. **The queen is never moved** — her
+  chamber is fixed; everything else is fair game.
+- `src/sim/ants/jobs.ts` — the `DIGGER` job: go to the dig frontier, remove a
+  tile, repeat.
+- `src/web/render/nest-view.ts` — active dig sites, newly opened rooms.
+
+**Test:**
+- knowledge measurably propagates: isolate one ant with a known rich patch,
+  confirm colony-wide foraging efficiency rises faster than first-hand
+  discovery alone would.
+- a colony under repeated graveyard predation relocates the graveyard within N
+  ticks and the old plot empties.
+- excavation only ever converts `SOIL` — never structural `WALL` or the queen
+  chamber; the nest stays fully connected after every dig.
+- determinism holds.
+
+**Run it:** a colony that reshapes itself — diggers opening a new wing, the
+graveyard migrating away from a predator hotspot, foraging tightening up run
+over run.
+
+---
+
+## Phase 12 — visual overhaul
+
+Everything below the sim gets rebuilt. `src/web` only — the sim and every sim
+test are untouched.
+
+- **Hide the grid.** No visible tiles. Chambers read as organic dug-out
+  pockets, tunnels as smooth channels, the surface as ground — not a lattice.
+- **Real movement.** Ants interpolate smoothly between tiles (the sim still
+  ticks discretely; the renderer eases positions), face their heading, and
+  animate — a stylised body, not a dot.
+- **The cube.** The nest and surface become two faces of a 3D volume the
+  visitor can **rotate and orbit** — surface on top, nest cross-section on the
+  side — instead of two flat canvases. WebGL; weigh a light lib vs. hand-rolled
+  when we get here.
+- **Global conditions HUD.** Weather, time of day, season, temperature frame
+  the **whole** view, not just the surface panel — one clock/weather widget for
+  the simulation.
+- **Menus.** A proper panel system — dashboard, view controls, and any
+  colony-decision readouts in one coherent UI, not stacked fixed-position
+  buttons.
+- **Art direction.** Grounded-realistic, or a flat warm hand-drawn 2D look
+  (Paper Mario-ish). Decide early — it drives sprite work, palette, and
+  lighting. "Local mode" and the tuning dashboard keep working throughout.
+
+**Test:** visual / manual — the cube rotates, ants move fluidly and read as
+ants, the HUD frames the whole scene. Every sim test still green (nothing here
+touches `src/sim`).
+
+**Run it:** the finished-looking thing — a colony you can turn around in your
+hands.
+
+---
+
+## Phase 13 — move the loop server-side (first Cloudflare step)
 
 - `wrangler.jsonc` — add `main`, the `COLONY` Durable Object binding, and the
   `v1` migration (`new_sqlite_classes`). No D1 yet.
@@ -282,7 +536,7 @@ time tuning `src/sim/params.ts`.
 
 ---
 
-## Phase 7 — persistence + hibernation replay
+## Phase 14 — persistence + hibernation replay
 
 - `src/sim/serialize.ts` — encode/decode state.
 - `src/worker/persistence.ts` — save every N ticks, load in the constructor.
@@ -294,7 +548,7 @@ asserts the colony resumes from storage and replays the missed ticks. Leave
 
 ---
 
-## Phase 8 — visitor actions
+## Phase 15 — visitor actions
 
 - `src/sim/inputs.ts` — apply food/water.
 - `src/worker/inputs.ts` — validate, clamp, per-visitor daily allowance, global
@@ -307,7 +561,7 @@ enforces allowance + rate limit. In the browser: drop food, watch foragers find 
 
 ---
 
-## Phase 9 — D1: names, lineage, pins, browsing
+## Phase 16 — D1: names, lineage, pins, browsing
 
 - `db/schema.sql` + `migrations/0001_init.sql`; `wrangler d1 create`, wire the
   `DB` binding.
@@ -322,7 +576,7 @@ rows appear; `/api/ants` returns only the living; pin/unpin round-trips.
 
 ---
 
-## Phase 10 — cron, KV cache, deploy
+## Phase 17 — cron, KV cache, deploy
 
 - `src/worker/cron.ts` + `triggers.crons` — DO keepalive + nightly housekeeping.
 - Optional `CACHE` KV namespace for the living-ants page and pin leaderboard.
@@ -340,4 +594,4 @@ to production.
 - Every phase must leave `npm test` green and `npm run dev` (or `wrangler dev`)
   showing something.
 - Keep "local mode" in the web client forever — it's your tuning workbench.
-- Tune `params.ts` at the end of Phase 5, not before.
+- Tune `params.ts` after Phase 5, and again after Phase 11 — not before.
