@@ -55,4 +55,35 @@ describe("simulation determinism", () => {
 
     expect(big.state).toEqual(small);
   });
+
+  // Phase 5: environment advances at tick-order step 2 and consumes rng for
+  // the weather Markov chain and the predator (a variable 1-2 calls per tick
+  // depending on env state). 3000 ticks is long enough for dozens of weather
+  // transitions and at least one predator visit, so this catches any place
+  // advanceEnvironment's rng cadence diverges between one big step and many.
+  it("stays identical through Phase 5 environment: 3000 ticks, one call vs 3000", () => {
+    const seed = 90210;
+    const big = step(createInitialState(seed), 3000);
+
+    let small = createInitialState(seed);
+    for (let i = 0; i < 3000; i++) small = step(small, 1).state;
+
+    expect(big.state).toEqual(small);
+  }, 20000);
+
+  // A forced hard winter puts the per-worker cold-death roll (index.ts's
+  // worker loop) in play every tick, on top of weather + predator — the
+  // densest RNG path the sim has. climateOverride is test-only scaffolding
+  // but the determinism guarantee still has to hold with it set.
+  it("stays identical with the cold-death roll active: forced winter, 1500 ticks", () => {
+    const seed = 4242;
+    const override = { season: "WINTER", weather: "SNOW" } as const;
+
+    const big = step(createInitialState(seed, override), 1500);
+
+    let small = createInitialState(seed, override);
+    for (let i = 0; i < 1500; i++) small = step(small, 1).state;
+
+    expect(big.state).toEqual(small);
+  }, 20000);
 });

@@ -6,15 +6,9 @@
 // precomputing a field for it would be pure overhead). All three route
 // through passableNeighbors, which now returns GROUND tiles too — nothing
 // here needs to know or care which grid it's called on.
-
+import { NOISE_PROBABILITY } from "../params";
 import { rng, randomInt } from "../rng";
 import { getIndex, manhattanDistance, passableNeighbors, type Grid, type Position } from "../world/grid";
-
-// 20% of the time, ignore the gradient and wander among ALL passable
-// neighbors instead of stepping toward the target. That's the noise that
-// stops every ant tracing the identical shortest-path tile and forming a
-// rigid conga line down one corridor.
-const NOISE_PROBABILITY = 0.2;
 
 // Picks uniformly among the passable neighbors of `position` — not "roll a
 // direction, then check if it happens to be valid," which is what Phase 3

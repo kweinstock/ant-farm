@@ -4,10 +4,9 @@ import {
     createStarterNest,
     tilesOf,
     UNREACHABLE_DISTANCE,
-    GRID_WIDTH,
-    GRID_HEIGHT,
     type ChamberRole,
 } from "../../src/sim/world/nest";
+import { GRID_WIDTH, GRID_HEIGHT } from "../../src/sim/params";
 import { isPassable, passableNeighbors, getIndex } from "../../src/sim/world/grid";
 
 const ROLES: ChamberRole[] = ["QUEEN", "NURSERY", "FOOD_STORAGE", "COMMONS", "EXIT"];

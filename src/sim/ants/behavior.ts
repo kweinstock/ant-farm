@@ -12,14 +12,12 @@
 // because rule 4 unconditionally catches every FORAGER, nest or surface,
 // before execution could ever fall through to them.
 import type { Ant } from "./ant";
-import { HUNGER_THRESHOLD } from "./ant";
 import type { Perception } from "./senses";
 import type { ChamberRole } from "../world/nest";
 import type { Position } from "../world/grid";
 import { decideForager } from "./foraging";
 import { decideUndertaker } from "./undertaking";
-
-export const NURSE_EGG_CAPACITY = 3;
+import { HUNGER_THRESHOLD, NURSE_EGG_CAPACITY } from "../params";
 
 export type Action =
     | { type: "goto"; role: ChamberRole }

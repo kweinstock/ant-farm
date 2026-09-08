@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createInitialState } from "../../src/sim/state";
 import { step } from "../../src/sim";
-import { MAX_PILES } from "../../src/sim/world/surface";
+import { MAX_PILES } from "../../src/sim/params";
 
 describe("surface food economy", () => {
     it("piles keep spawning, stay capped, and are actually consumed", () => {

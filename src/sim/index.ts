@@ -78,24 +78,13 @@ import { evaporate } from "./pheromones";
 import { rng } from "./rng";
 import type { ColonyState } from "./state";
 import type { AntId } from "./ants/ant";
-
-// UNTUNED STARTING POINT, same spirit as world/surface.ts's/pheromones.ts's
-// own constants. Consumed only here, so it lives here rather than in
-// params.ts — params.ts is still an untouched stub (see the Phase 4
-// context-refresh discussion); if it ever becomes real, this is a candidate
-// to move there along with pheromones.ts's constants, but nothing about
-// this phase forces that now. Per-tick background hazard for a worker on the
-// surface — predation, weather, etc. folded into one number until Phase 5's
-// environment/hazards.ts splits them out. Scaled by WANDER_EXPOSURE when the
-// ant is wandering lost (surfaceWander action) vs. moving with purpose: an
-// ant zig-zagging in the open is more exposed than one on a beeline. This
-// gives wandering a real cost (so trails/memory are worth using) but note it
-// does NOT make deaths-per-trip trend down measurably — trip length is driven
-// by where piles randomly spawn, not navigation quality. What Phase 4's
-// learning actually improves is food delivered per trip (recruitment); that's
-// what learning.test.ts measures.
-const SURFACE_DEATH_CHANCE = 0.0004;
-const WANDER_EXPOSURE = 2.5;
+import { SURFACE_DEATH_CHANCE, WANDER_EXPOSURE, RAIN_EXPOSURE_MULT, WIND_EXPOSURE_MULT, RAIN_EVAPORATION_FACTOR, PREDATOR_MAX_DURATION } from "./params";
+import { seasonOf } from "./environment/season";
+import { timeOfDay, dayOfYear, phaseOfDay } from "./environment/clock";
+import { ambientTemp, tempAtDepth } from "./environment/temperature";
+import { advanceWeather, type WeatherKind } from "./environment/weather";
+import { advancePredator, predatorStrikeChance, coldDeathChance } from "./environment/hazards";
+import type { EnvState } from "./state";
 
 
 export type DeathEvent = {
@@ -103,6 +92,26 @@ export type DeathEvent = {
     antId: AntId;
     ageTicks: number;
     where: "nest" | "surface";
+    cause: "oldAge" | "starvation" | "predator" | "cold" | "exposure";
+};
+
+export type WeatherChangedEvent = { 
+    kind: "weatherChanged";
+    from: WeatherKind; 
+    to: WeatherKind 
+};
+
+export type PredatorAppearedEvent = { 
+    kind: "predatorAppeared" 
+};
+
+export type PredatorLeftEvent = { 
+    kind: "predatorLeft" 
+};
+
+export type PredatorStrikeEvent = { 
+    kind: "predatorStrike"; 
+    antId: AntId 
 };
 
 export type BirthEvent = {
@@ -116,7 +125,14 @@ export type ForageDepartEvent = {
     antId: AntId;
 };
 
-export type SimEvent = DeathEvent | BirthEvent | ForageDepartEvent;
+export type SimEvent =
+    | DeathEvent
+    | BirthEvent
+    | ForageDepartEvent
+    | WeatherChangedEvent
+    | PredatorAppearedEvent
+    | PredatorLeftEvent
+    | PredatorStrikeEvent;
 
 type TickResult = {
     state: ColonyState;
@@ -136,25 +152,24 @@ function recordDeath(corpses: ColonyState["corpses"], nextCorpseId: number, dead
 // Remove a dead worker: drop it from state.ants, leave a corpse, push the
 // DeathEvent. Shared by the two ways a worker dies in the loop below
 // (ageAndMeter's age/starvation, and the surface hazard roll).
-function killWorker(
-    cs: ColonyState,
-    dead: Parameters<typeof recordDeath>[2],
-    events: SimEvent[]
-): ColonyState {
+function killWorker(cs: ColonyState, dead: Parameters<typeof recordDeath>[2], cause: DeathEvent["cause"], events: SimEvent[]): ColonyState {
     const nextAnts = new Map(cs.ants);
     nextAnts.delete(dead.id);
     const { corpses, nextCorpseId } = recordDeath(cs.corpses, cs.nextCorpseId, dead);
-    events.push({ kind: "death", antId: dead.id, ageTicks: dead.ageTicks, where: dead.location.where });
+    events.push({ kind: "death", antId: dead.id, ageTicks: dead.ageTicks, where: dead.location.where, cause });
     return { ...cs, ants: nextAnts, corpses, nextCorpseId };
 }
 
 function singleTick(state: ColonyState): TickResult {
     const events: SimEvent[] = [];
 
-    const undertakerAssignment = assignUndertakers(state);
+    const envResult = advanceEnvironment(state);
+    events.push(...envResult.events);
+
+    const undertakerAssignment = assignUndertakers(envResult.state);
 
     let currentState: ColonyState = {
-        ...state,
+        ...envResult.state,
         ants: undertakerAssignment.ants,
         rngSeed: undertakerAssignment.rngSeed,
     };
@@ -167,7 +182,8 @@ function singleTick(state: ColonyState): TickResult {
         const {ant: metered, isDead: agedDead} = ageAndMeter(worker);
 
         if (agedDead) {
-            currentState = killWorker(currentState, metered, events);
+            const cause = metered.energy <= 0 ? "starvation" : "oldAge";
+            currentState = killWorker(currentState, metered, cause, events);
             continue;
         }
 
@@ -181,11 +197,40 @@ function singleTick(state: ColonyState): TickResult {
         // advance for it, which is fine and deterministic given the fixed
         // worker sort order.)
         if (metered.location.where === "surface") {
-            const exposure = action.type === "surfaceWander" ? WANDER_EXPOSURE : 1;
+            let exposure = action.type === "surfaceWander" ? WANDER_EXPOSURE : 1;
+            if (currentState.env.weather.kind === "RAIN") exposure *= RAIN_EXPOSURE_MULT;
+            if (currentState.env.weather.kind === "WIND") exposure *= WIND_EXPOSURE_MULT;
+
+            const baseChance = SURFACE_DEATH_CHANCE * exposure;
             const hazardRoll = rng(currentState.rngSeed);
             currentState = { ...currentState, rngSeed: hazardRoll.seed };
-            if (hazardRoll.value < SURFACE_DEATH_CHANCE * exposure) {
-                currentState = killWorker(currentState, metered, events);
+            if (hazardRoll.value < baseChance) {
+                currentState = killWorker(currentState, metered, "exposure", events);
+                continue;
+            }
+
+            const strikeChance = predatorStrikeChance(currentState.env.predator ?? undefined, metered.location.pos);
+            if (strikeChance > 0) {
+                const strikeRoll = rng(currentState.rngSeed);
+                currentState = { ...currentState, rngSeed: strikeRoll.seed };
+                if (strikeRoll.value < strikeChance) {
+                    events.push({ kind: "predatorStrike", antId: metered.id });
+                    currentState = killWorker(currentState, metered, "predator", events);
+                    continue;
+                }
+            }
+        }
+
+        const tileTemp =
+            metered.location.where === "surface"
+                ? currentState.env.ambientTemp
+                : tempAtDepth(currentState.env.ambientTemp, metered.location.pos.y);
+        const coldChance = coldDeathChance(tileTemp);
+        if (coldChance > 0) {
+            const coldRoll = rng(currentState.rngSeed);
+            currentState = { ...currentState, rngSeed: coldRoll.seed };
+            if (coldRoll.value < coldChance) {
+                currentState = killWorker(currentState, metered, "cold", events);
                 continue;
             }
         }
@@ -233,6 +278,7 @@ function singleTick(state: ColonyState): TickResult {
                 antId: currentState.queenId,
                 ageTicks: queenResult.queen.ageTicks,
                 where: queenResult.queen.location.where,
+                cause: "oldAge",
             });
         } else {
             nextAntsAfterQueen.set(currentState.queenId, queenResult.queen);
@@ -267,22 +313,71 @@ function singleTick(state: ColonyState): TickResult {
         rngSeed: broodResult.rngSeed,
     };
 
-    const spawnResult = spawnFoodPiles(currentState.surface, currentState.rngSeed);
+    const spawnResult = spawnFoodPiles(currentState.surface, currentState.rngSeed, currentState.env.season);
     const surfaceAfterSpawn = ageFoodPiles(spawnResult.surface);
-    const surface = { ...surfaceAfterSpawn, trail: evaporate(surfaceAfterSpawn.trail) };
+    const evapFactor = currentState.env.weather.kind === "RAIN" ? RAIN_EVAPORATION_FACTOR : undefined;
+    const surface = { ...surfaceAfterSpawn, trail: evaporate(surfaceAfterSpawn.trail, evapFactor) };
     const corpses = ageCorpses(currentState.corpses);
 
     return {
         state: {
             ...currentState,
             seq: currentState.seq + 1,
-            simTime: currentState.simTime + 1,
+            // simTime is NOT bumped again here — advanceEnvironment already
+            // set it to state.simTime + 1 at the top of this function.
             surface,
             corpses,
             rngSeed: spawnResult.seed,
         },
         events,
     };
+}
+
+function advanceEnvironment(state: ColonyState): { state: ColonyState; events: SimEvent[] } {
+    const events: SimEvent[] = [];
+    const simTime = state.simTime + 1;
+    const ov = state.climateOverride;
+    const season = ov?.season ?? seasonOf(simTime);
+    const tod = timeOfDay(simTime);
+    const doy = dayOfYear(simTime);
+
+    // advanceWeather still runs (and consumes its rng roll) even when the
+    // override pins the kind — keeps the RNG cadence identical to a normal
+    // run, so an overridden test and a real run diverge only in weather, not
+    // in every downstream roll.
+    const weatherStep = advanceWeather(state.env.weather, season, state.rngSeed);
+    const weather = ov?.weather
+        ? { kind: ov.weather, ticksRemaining: weatherStep.weather.ticksRemaining, forecast: weatherStep.weather.forecast }
+        : weatherStep.weather;
+    if (!ov?.weather && weatherStep.changed) {
+        events.push({ kind: "weatherChanged", from: state.env.weather.kind, to: weatherStep.weather.kind });
+    }
+
+    const predatorStep = advancePredator(
+        state.env.predator ?? undefined,
+        { season, weatherKind: weather.kind, holePos: state.surface.holePos, surfaceWidth: state.surface.grid.width },
+        weatherStep.seed,
+    );
+    let predator = predatorStep.predator;
+    if (ov?.predatorAlways && predator === undefined) {
+        predator = { pos: { ...state.surface.holePos }, ticksRemaining: PREDATOR_MAX_DURATION };
+    }
+    if (!ov?.predatorAlways) {
+        if (predatorStep.appeared) events.push({ kind: "predatorAppeared" });
+        if (predatorStep.left) events.push({ kind: "predatorLeft" });
+    }
+
+    const env: EnvState = {
+        timeOfDay: tod,
+        dayOfYear: doy,
+        phase: phaseOfDay(simTime),
+        season,
+        ambientTemp: ambientTemp(season, tod, weather.kind),
+        weather,
+        predator: predator ?? null,
+    };
+
+    return { state: { ...state, env, rngSeed: predatorStep.seed, simTime }, events };
 }
 
 export function step(state: ColonyState, dtTicks: number): TickResult {

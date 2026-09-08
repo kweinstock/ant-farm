@@ -5,19 +5,45 @@
 // of a bare `position` — see ants/ant.ts. The queen's `where` is always
 // "nest"; only foragers ever set it to "surface".
 
-import { createStarterNest, tilesOf, GRID_WIDTH, GRID_HEIGHT, type Nest } from "./world/nest";
-import { createSurface, SURFACE_WIDTH, SURFACE_HEIGHT, type Surface } from "./world/surface";
+import { createStarterNest, tilesOf, type Nest } from "./world/nest";
+import { createSurface, type Surface } from "./world/surface";
 import type { Grid } from "./world/grid";
 import { type Ant, type AntId, createQueen, createWorker } from "./ants/ant";
 import type { Brood } from "./colony/brood";
 import type { Corpse } from "./corpses";
+import { FOOD_STORE_CAP, GRID_HEIGHT, GRID_WIDTH, STARTER_WORKER_COUNT, STARTING_FOOD_STORE, SURFACE_HEIGHT, SURFACE_WIDTH } from "./params";
+import type { TimeOfDay } from "./environment/clock";
+import { timeOfDay, dayOfYear, phaseOfDay } from "./environment/clock";
+import type { Season } from "./environment/season";
+import { seasonOf } from "./environment/season";
+import type { WeatherState } from "./environment/weather";
+import { initialWeather } from "./environment/weather";
+import type { Predator } from "./environment/hazards";
+import { ambientTemp } from "./environment/temperature";
+import type { WeatherKind } from "./environment/weather";
 
-const STARTER_WORKER_COUNT = 5;
+export type EnvState = {
+    timeOfDay: TimeOfDay;
+    dayOfYear: number;
+    phase: number;
+    season: Season;
+    ambientTemp: number;
+    weather: WeatherState;
+    predator: Predator | null;
+};
 
-export const STARTING_FOOD_STORE = 400;
-export const FOOD_STORE_CAP = 500;
-
-export const FORAGER_LOAD = 100;
+// Test/debug scaffolding, NOT a normal gameplay path. When present on
+// ColonyState, advanceEnvironment (index.ts) pins these instead of letting
+// the clock/Markov chain drive them — used by balance.test.ts to hold the
+// sim in glut / drought / harsh winter / constant-predator conditions
+// without simulating tens of thousands of ticks to reach a real winter.
+// Left undefined in createInitialState's normal call, so it has zero effect
+// on determinism or (later) serialization.
+export type ClimateOverride = {
+    season?: Season;
+    weather?: WeatherKind;
+    predatorAlways?: boolean;
+};
 
 export type ColonyState = {
     seq: number;
@@ -26,6 +52,7 @@ export type ColonyState = {
     grid: Grid;
     nest: Nest;
     surface: Surface;
+    env: EnvState;
     ants: Map<AntId, Ant>;
     nextAntId: number;
     nextBroodId: number;
@@ -34,9 +61,10 @@ export type ColonyState = {
     corpses: Corpse[];
     nextCorpseId: number;
     foodStore: { amount: number; capacity: number };
+    climateOverride?: ClimateOverride;
 };
 
-export function createInitialState(seed: number): ColonyState {
+export function createInitialState(seed: number, climateOverride?: ClimateOverride): ColonyState {
     const {grid, nest} = createStarterNest(GRID_WIDTH, GRID_HEIGHT);
     const surface = createSurface(SURFACE_WIDTH, SURFACE_HEIGHT);
 
@@ -58,6 +86,23 @@ export function createInitialState(seed: number): ColonyState {
         ants.set(workerId, worker.ant);
     }
 
+    const simTime = 0;
+    const season = climateOverride?.season ?? seasonOf(simTime);
+    const { weather: rolledWeather, seed: envSeed } = initialWeather(currentSeed);
+    currentSeed = envSeed;
+    const weather: WeatherState = climateOverride?.weather
+        ? { kind: climateOverride.weather, ticksRemaining: rolledWeather.ticksRemaining, forecast: [] }
+        : rolledWeather;
+    const env: EnvState = {
+        timeOfDay: timeOfDay(simTime),
+        dayOfYear: dayOfYear(simTime),
+        phase: phaseOfDay(simTime),
+        season,
+        ambientTemp: ambientTemp(season, timeOfDay(simTime), weather.kind),
+        weather,
+        predator: null,
+    };
+
     return {
         seq: 0,
         simTime: 0,
@@ -65,6 +110,7 @@ export function createInitialState(seed: number): ColonyState {
         grid,
         nest,
         surface,
+        env,
         ants,
         nextAntId,
         nextBroodId: 1,
@@ -76,5 +122,6 @@ export function createInitialState(seed: number): ColonyState {
             amount: STARTING_FOOD_STORE,
             capacity: FOOD_STORE_CAP,
         },
+        climateOverride,
     };
 }

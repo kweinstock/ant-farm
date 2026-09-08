@@ -8,7 +8,8 @@
 // render/ants.ts's drawAnt/drawCorpse. cellSize is a parameter rather than
 // importing SURFACE_CELL_SIZE directly, same reasoning as everywhere else
 // in render/: this file doesn't need to assume which view it's drawn into.
-import { trailAt, MAX_TRAIL, MIN_TRAIL, type TrailField } from "../../sim/pheromones";
+import { trailAt, type TrailField } from "../../sim/pheromones";
+import { MAX_TRAIL, MIN_TRAIL } from "../../sim/params";
 
 // Warm amber — deliberately distinct from surface-view.ts's PILE_COLOR
 // (green) and ants.ts's CORPSE_COLOR (grey), so a stained trail doesn't get

@@ -5,7 +5,8 @@
 // type/role lookup — one flat fill instead of a per-cell loop for the
 // ground itself, then (PHASE 4) the trail layer, the graveyard, food
 // piles, corpses, the hole, and ants filtered to where === "surface".
-import { PILE_START_AMOUNT, inGraveyard } from "../../sim/world/surface";
+import { inGraveyard } from "../../sim/world/surface";
+import { PILE_START_AMOUNT } from "../../sim/params";
 import type { ColonyState } from "../../sim/state";
 import type { Corpse } from "../../sim/corpses";
 import type { AntId } from "../../sim/ants/ant";

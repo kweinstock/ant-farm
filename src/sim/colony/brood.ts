@@ -11,10 +11,8 @@ import { createWorker } from "../ants/ant";
 import type { ColonyState } from "../state";
 import { chamberAt, tilesOf } from "../world/nest";
 import type { Position } from "../world/grid";
-
-const EGG_DURATION_TICKS = 30;
-const LARVA_DURATION_TICKS = 60;
-const PUPA_DURATION_TICKS = 50;
+import { EGG_DURATION_TICKS, LARVA_DURATION_TICKS, PUPA_DURATION_TICKS } from "../params";
+import { broodSpeed } from "../environment/season";
 
 
 export type BroodStage = "EGG" | "LARVA" | "PUPA";
@@ -57,6 +55,10 @@ export function advanceBrood(state: ColonyState): {brood: Brood[]; newAdults: An
     // case of an empty NURSERY chamber, which the hand-authored layout never
     // actually produces.
     const eclosionPosition: Position = nurseryTiles[0] ?? {x: 0, y: 0}
+    const speed = broodSpeed(state.env.season);
+    const eggDuration = EGG_DURATION_TICKS / speed;
+    const larvaDuration = LARVA_DURATION_TICKS / speed;
+    const pupaDuration = PUPA_DURATION_TICKS / speed;
 
     for (const entry of state.brood) {
         const isPlaced = entry.carriedBy === undefined && chamberAt(state.nest, entry.position) === "NURSERY";
@@ -73,7 +75,7 @@ export function advanceBrood(state: ColonyState): {brood: Brood[]; newAdults: An
 
         if (entry.stage === "EGG") {
             const progressTicks = entry.progressTicks + 1;
-            remainingBrood.push(progressTicks >= EGG_DURATION_TICKS 
+            remainingBrood.push(progressTicks >= eggDuration 
                 ? {...entry, stage: "LARVA", progressTicks: 0}
                 : {...entry, progressTicks}
             );
@@ -82,7 +84,7 @@ export function advanceBrood(state: ColonyState): {brood: Brood[]; newAdults: An
 
         if (entry.stage === "LARVA") {
             const progressTicks = entry.progressTicks + 1;
-            remainingBrood.push(progressTicks >= LARVA_DURATION_TICKS
+            remainingBrood.push(progressTicks >= larvaDuration
                 ? {...entry, stage: "PUPA", progressTicks: 0}
                 : {...entry, progressTicks}
             );
@@ -92,7 +94,7 @@ export function advanceBrood(state: ColonyState): {brood: Brood[]; newAdults: An
         // PUPA
         const progressTicks = entry.progressTicks + 1;
 
-        if (progressTicks >= PUPA_DURATION_TICKS) {
+        if (progressTicks >= pupaDuration) {
             const antId = `ant-${nextAntId}`;
             nextAntId += 1;
 

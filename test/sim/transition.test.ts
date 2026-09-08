@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { createInitialState, STARTING_FOOD_STORE } from "../../src/sim/state";
+import { createInitialState } from "../../src/sim/state";
+import { STARTING_FOOD_STORE } from "../../src/sim/params";
 import { step } from "../../src/sim";
 import { exitMouth } from "../../src/sim/world/nest";
 import type { FoodPile } from "../../src/sim/world/surface";

@@ -3,8 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createInitialState } from "../../src/sim/state";
 import { step } from "../../src/sim";
 import { chamberAt } from "../../src/sim/world/nest";
-import { NURSE_EGG_CAPACITY } from "../../src/sim/ants/behavior";
-import { NURSERY_TILE_CAPACITY } from "../../src/sim/ants/jobs";
+import { NURSE_EGG_CAPACITY, NURSERY_TILE_CAPACITY } from "../../src/sim/params";
 
 describe("nursery / egg carrying", () => {
     it("eggs travel queen chamber -> nursery, both caps hold every tick, and adults eventually eclose", () => {

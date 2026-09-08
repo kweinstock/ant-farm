@@ -17,36 +17,8 @@
 import { createGrid, manhattanDistance, TILE, type Grid, type Position } from "./grid";
 import { randomInt } from "../rng";
 import { createTrailField, type TrailField } from "../pheromones";
-
-export const SURFACE_WIDTH = 40;
-export const SURFACE_HEIGHT = 28;
-
-// Probed over 10k ticks (seed 12345): 3-8 piles steady, store held 350-500,
-// population ~40-58 while queened. Left as-is.
-export const MAX_PILES = 10;
-export const PILE_START_AMOUNT = 250;
-// Rolled once per tick in spawnFoodPiles. At this rate, once foodPiles.length
-// is below MAX_PILES, a spawn attempt succeeds roughly every 20 ticks on
-// average — a guess at "3-5 piles exist steadily," not a derived value.
-export const PILE_SPAWN_CHANCE = 0.05;
-// Comfortably longer than one round trip (~70-100 ticks per the economy
-// note) so a pile a forager is actively walking toward doesn't expire out
-// from under it in the common case.
-export const PILE_DECAY_TICKS = 400;
-
-// Piles never spawn this close to the hole — keeps the immediate mouth of
-// the shaft clear instead of a pile spawning right where foragers emerge,
-// which would make "find food" trivial and remove the travel time the whole
-// economy is built around.
-const HOLE_EXCLUSION_RADIUS = 5;
-
-// Bounded retry count for spawnFoodPiles' rejection sampling below. Every
-// attempt (accepted or not) draws two RNG values, so this bounds the RNG
-// cost of a tick where most of the map is excluded — it does NOT bound
-// correctness: failing to find a tile in this many tries just means no pile
-// spawns this tick, which is indistinguishable from PILE_SPAWN_CHANCE not
-// having rolled at all.
-const MAX_SPAWN_ATTEMPTS = 20;
+import { HOLE_EXCLUSION_RADIUS, MAX_PILES, MAX_SPAWN_ATTEMPTS, PILE_DECAY_TICKS, PILE_SPAWN_CHANCE, PILE_START_AMOUNT } from "../params";
+import { forageAbundance, type Season } from "../environment/season";
 
 export type FoodPileId = string;
 
@@ -79,12 +51,6 @@ export type Surface = {
 function inRect(pos: Position, rect: Rect): boolean {
     return pos.x >= rect.x0 && pos.x <= rect.x1 && pos.y >= rect.y0 && pos.y <= rect.y1;
 }
-
-// Soft target: a grave tile prefers to hold this many bodies before the next
-// one spills to another tile. Not a hard cap — a busy colony's graveyard can
-// exceed the rect's whole capacity (decay is what actually bounds it), and
-// then bodies just pile deeper on the least-crowded tiles.
-export const CORPSE_PER_GRAVE_TILE = 2;
 
 export function inGraveyard(surface: Surface, pos: Position): boolean {
     return inRect(pos, surface.graveyard);
@@ -175,11 +141,11 @@ export function createSurface(width: number, height: number): Surface {
     };
 }
 
-export function spawnFoodPiles(surface: Surface, rngSeed: number): { surface: Surface; seed: number } {
+export function spawnFoodPiles(surface: Surface, rngSeed: number, season: Season): { surface: Surface; seed: number } {
     const chanceRoll = randomInt(rngSeed, 0, 1_000_000);
     let seed = chanceRoll.seed;
 
-    const shouldTrySpawn = chanceRoll.value / 1_000_000 < PILE_SPAWN_CHANCE;
+    const shouldTrySpawn = chanceRoll.value / 1_000_000 < PILE_SPAWN_CHANCE * forageAbundance(season);
 
     if (!shouldTrySpawn || surface.foodPiles.length >= MAX_PILES) {
         return { surface, seed };
@@ -208,7 +174,7 @@ export function spawnFoodPiles(surface: Surface, rngSeed: number): { surface: Su
         const pile: FoodPile = {
             id: `pile-${surface.nextPileId}`,
             pos: candidate,
-            amount: PILE_START_AMOUNT,
+            amount: Math.round(PILE_START_AMOUNT * forageAbundance(season)),
             ageTicks: 0,
         };
 

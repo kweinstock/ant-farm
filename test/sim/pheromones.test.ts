@@ -6,12 +6,14 @@ import {
     deposit,
     evaporate,
     strongestPassableNeighbor,
+} from "../../src/sim/pheromones";
+import {
     MAX_TRAIL,
     MIN_TRAIL,
     FOLLOW_THRESHOLD,
     DEPOSIT_AMOUNT,
     SPREAD_FRAC,
-} from "../../src/sim/pheromones";
+} from "../../src/sim/params";
 import { createGrid, setTile, TILE } from "../../src/sim/world/grid";
 
 function groundGrid(w: number, h: number) {

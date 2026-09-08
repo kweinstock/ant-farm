@@ -17,9 +17,8 @@ import type { Ant } from "../ants/ant";
 import type { ColonyState } from "../state";
 import { layEgg, type Brood } from "./brood";
 import { tilesOf } from "../world/nest";
-
-const BASE_LAY_PROBABILITY = 0.1;
-const POPULATION_SOFT_TARGET = 30;
+import { BASE_LAY_PROBABILITY, POPULATION_SOFT_TARGET } from "../params";
+import { layFactor } from "../environment/season";
 
 export type QueenTickResult = {
     brood: Brood[];
@@ -61,7 +60,8 @@ export function tickQueen(state: ColonyState): QueenTickResult {
     // adding a lay-rate brake now would just destabilise a working balance
     // for no benefit. Phase 4 revisits it, where weather/season give a
     // foodFactor something real to respond to.
-    const layProbability = BASE_LAY_PROBABILITY * populationFactor;
+    const foodFactor = state.foodStore.amount / state.foodStore.capacity;
+    const layProbability = BASE_LAY_PROBABILITY * populationFactor * layFactor(state.env.season) * foodFactor;
 
     // Roll unconditionally (keeps the RNG cadence identical whether or not the
     // nursery is full), then gate on capacity.

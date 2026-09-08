@@ -27,13 +27,12 @@
 import type { Ant, AntLocation } from "./ant";
 import type { Perception } from "./senses";
 import type { Action } from "./behavior";
-import { HUNGER_THRESHOLD } from "./ant";
 import { wander, stepToward } from "./movement";
 import { takeFromPile } from "../world/surface";
 import { depositToStore } from "../world/resources";
-import { deposit, DEPOSIT_AMOUNT } from "../pheromones";
+import { deposit } from "../pheromones";
 import { rememberFoodSite } from "./memory";
-import { FORAGER_LOAD } from "../state";
+import { HUNGER_THRESHOLD, DEPOSIT_AMOUNT, FORAGER_LOAD } from "../params";
 import type { ColonyState } from "../state";
 import type { Position } from "../world/grid";
 import type { ActResult } from "./jobs";

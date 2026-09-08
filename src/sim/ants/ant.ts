@@ -3,16 +3,7 @@ import { randomInt } from "../rng";
 import { BroodId } from "../colony/brood";
 import type { CorpseId } from "../corpses";
 import { emptyMemory, type AntMemory } from "./memory";
-
-const STARTING_ENERGY = 1500;
-export const MAX_ENERGY = 1500;
-export const HUNGER_THRESHOLD = 0.5;
-
-export const MIN_LIFESPAN_TICKS = 500;
-export const MAX_LIFESPAN_TICKS = 1000;
-
-export const QUEEN_MIN_LIFESPAN_TICKS = 4000;
-export const QUEEN_MAX_LIFESPAN_TICKS = 7000;
+import { STARTING_ENERGY, MIN_LIFESPAN_TICKS, MAX_LIFESPAN_TICKS, QUEEN_MIN_LIFESPAN_TICKS, QUEEN_MAX_LIFESPAN_TICKS } from "../params";
 
 export type AntId = string;
 export type Caste = "QUEEN" | "WORKER";

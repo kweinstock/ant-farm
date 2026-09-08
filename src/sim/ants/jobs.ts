@@ -15,7 +15,6 @@
 // undertaker crossing with a corpse. Its egg-carrying counterpart never
 // needed this split — eggs never leave the nest.
 import type { Ant, AntLocation, Job } from "./ant";
-import { MAX_ENERGY } from "./ant";
 import type { Action } from "./behavior";
 import { wander, moveToward } from "./movement";
 import { chamberAt, tilesOf, exitMouth } from "../world/nest";
@@ -26,9 +25,7 @@ import type { Corpse } from "../corpses";
 import { eatFromStore } from "../world/resources";
 import { pickUpFood, depositFood, surfaceStep, surfaceWander } from "./foraging";
 import { moveToNestPoint, pickUpCorpse, dropCorpse, clearUndertaking } from "./undertaking";
-
-export const NURSERY_TILE_CAPACITY = 3;
-export const NURSE_AGE_THRESHOLD_TICKS = 150;
+import { MAX_ENERGY, NURSE_AGE_THRESHOLD_TICKS, NURSERY_TILE_CAPACITY } from "../params";
 
 export type ActResult = {
     ant: Ant;

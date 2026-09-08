@@ -17,15 +17,7 @@ import { manhattanDistance } from "./world/grid";
 import { inGraveyard, type Surface } from "./world/surface";
 import type { Ant, AntId, AntLocation } from "./ants/ant";
 import type { ColonyState } from "./state";
-
-// UNTUNED STARTING POINTS, same spirit as world/surface.ts's pile params —
-// expect to revisit after watching a run with natural deaths in it.
-// CORPSE_DECAY_TICKS is deliberately generous: longer than any plausible
-// haul (nest depth + graveyard walk is nowhere near this), so it only ever
-// fires as the leak-prevention backstop, not as a normal outcome.
-export const UNDERTAKER_PER_CORPSE = 0.5;
-export const MAX_UNDERTAKER_FRACTION = 0.3;
-export const CORPSE_DECAY_TICKS = 600;
+import { UNDERTAKER_PER_CORPSE, MAX_UNDERTAKER_FRACTION, CORPSE_DECAY_TICKS } from "./params";
 
 export type CorpseId = string;
 

@@ -3,12 +3,8 @@ import { describe, expect, it } from "vitest";
 import { createInitialState } from "../../src/sim/state";
 import { step } from "../../src/sim";
 import { inGraveyard } from "../../src/sim/world/surface";
-import {
-    assignUndertakers,
-    CORPSE_DECAY_TICKS,
-    UNDERTAKER_PER_CORPSE,
-    type Corpse,
-} from "../../src/sim/corpses";
+import { assignUndertakers, type Corpse } from "../../src/sim/corpses";
+import { CORPSE_DECAY_TICKS, UNDERTAKER_PER_CORPSE } from "../../src/sim/params";
 import type { Ant } from "../../src/sim/ants/ant";
 
 function nestCorpse(id: string, pos: { x: number; y: number }, ageTicks = 0): Corpse {

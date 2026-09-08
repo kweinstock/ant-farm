@@ -5,8 +5,7 @@
 // case (which calls depositToStore below) are now the only inflow. Surface
 // pile mechanics (spawn/decay/takeFromPile) live in world/surface.ts — this
 // file is just the nest store's two operations, eat and deposit.
-
-const EAT_AMOUNT = 50;
+import { EAT_AMOUNT } from "../params";
 
 export type FoodStore = { amount: number; capacity: number };
 

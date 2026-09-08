@@ -10,13 +10,26 @@
 // can flip the Trails toggle at any time, and renderOptions.showTrails is a
 // live getter (view-switch.ts's own comment) specifically so this loop
 // picks up that change on its very next frame rather than needing a restart.
-// Nest-side gets nothing here: the trail layer is surface-only this phase
-// (decision 1), so renderNestView's signature is untouched.
+//
+// PHASE 5: after renderSurfaceView, chain seasonFx -> weatherFx -> dayNight
+// on the surface canvas, in that order — season wash sits on the ground
+// itself, weather sits above the ground+piles+ants, day/night grades the
+// whole scene on top of everything. Nest gets an optional faint day/night
+// pass only (NEST_DAYNIGHT_INTENSITY); no season/weather effects
+// underground — those are surface-only phenomena. frameTime comes straight
+// from requestAnimationFrame's own timestamp param, so no extra
+// Date.now()/performance.now() call is needed; it's render-only and never
+// touches sim state (see weather-fx.ts's header).
 import type { ColonyState } from "../../sim/state";
 import { CELL_SIZE, SURFACE_CELL_SIZE } from "../config";
 import { renderNestView } from "./nest-view";
 import { renderSurfaceView } from "./surface-view";
+import { renderSeasonFx } from "./season-fx";
+import { renderWeather } from "./weather-fx";
+import { applyDayNight } from "./daynight";
 import type { RenderOptions } from "../ui/view-switch";
+
+const NEST_DAYNIGHT_INTENSITY = 0.35;
 
 export function startRenderLoop(
     nestCanvas: HTMLCanvasElement,
@@ -34,19 +47,29 @@ export function startRenderLoop(
     const nestCtx: CanvasRenderingContext2D = nestContext;
     const surfaceCtx: CanvasRenderingContext2D = surfaceContext;
 
-    function render(): void {
+    function render(frameTime: number): void {
         const state = getState();
 
-        nestCanvas.width = state.grid.width * CELL_SIZE;
-        nestCanvas.height = state.grid.height * CELL_SIZE;
-        surfaceCanvas.width = state.surface.grid.width * SURFACE_CELL_SIZE;
-        surfaceCanvas.height = state.surface.grid.height * SURFACE_CELL_SIZE;
+        const nestWidth = state.grid.width * CELL_SIZE;
+        const nestHeight = state.grid.height * CELL_SIZE;
+        const surfaceWidth = state.surface.grid.width * SURFACE_CELL_SIZE;
+        const surfaceHeight = state.surface.grid.height * SURFACE_CELL_SIZE;
 
-        nestCtx.clearRect(0, 0, nestCanvas.width, nestCanvas.height);
-        surfaceCtx.clearRect(0, 0, surfaceCanvas.width, surfaceCanvas.height);
+        nestCanvas.width = nestWidth;
+        nestCanvas.height = nestHeight;
+        surfaceCanvas.width = surfaceWidth;
+        surfaceCanvas.height = surfaceHeight;
+
+        nestCtx.clearRect(0, 0, nestWidth, nestHeight);
+        surfaceCtx.clearRect(0, 0, surfaceWidth, surfaceHeight);
 
         renderNestView(nestCtx, state);
+        applyDayNight(nestCtx, state.env, nestWidth, nestHeight, NEST_DAYNIGHT_INTENSITY);
+
         renderSurfaceView(surfaceCtx, state, renderOptions);
+        renderSeasonFx(surfaceCtx, state.env, surfaceWidth, surfaceHeight);
+        renderWeather(surfaceCtx, state.env, surfaceWidth, surfaceHeight, frameTime);
+        applyDayNight(surfaceCtx, state.env, surfaceWidth, surfaceHeight);
 
         requestAnimationFrame(render);
     }

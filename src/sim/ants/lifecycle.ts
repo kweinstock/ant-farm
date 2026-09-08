@@ -13,10 +13,10 @@
 // can be called and reasoned about without threading rngSeed through it —
 // only index.ts, which already owns rngSeed for the tick, needs to know
 // about that second way to die.
+import { METABOLISM_COST, NURSE_AGE_THRESHOLD_TICKS } from "../params";
 import type { Ant } from "./ant";
-import { NURSE_AGE_THRESHOLD_TICKS, assignJob } from "./jobs";
+import { assignJob } from "./jobs";
 
-const METABOLISM_COST = 1;
 
 export function ageAndMeter(ant: Ant): {ant: Ant, isDead: boolean} {
     const ageTicks = ant.ageTicks + 1;

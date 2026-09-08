@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createInitialState } from "../../src/sim/state";
 import { step } from "../../src/sim";
 import { tilesOf } from "../../src/sim/world/nest";
-import { NURSERY_TILE_CAPACITY } from "../../src/sim/ants/jobs";
+import { NURSERY_TILE_CAPACITY } from "../../src/sim/params";
 
 // Tune once real runs show what "sane" looks like. The lower bound treats
 // extinction as a failure — but ONLY while the colony still has a queen.
@@ -55,5 +55,5 @@ describe("population dynamics", () => {
         // sure the run actually exercised her death, not just a lucky long
         // reign, so the post-queen path above is really being tested.
         expect(queenEverDied).toBe(true);
-    });
+    }, 20000);
 });

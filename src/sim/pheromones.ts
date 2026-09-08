@@ -24,24 +24,7 @@
 // on how many evaporate() calls ran, which would break the equality
 // determinism.test.ts checks.
 import { passableNeighbors, type Grid, type Position } from "./world/grid";
-
-// UNTUNED STARTING POINTS, same spirit as world/surface.ts's pile params —
-// expect to revisit once foragers are actually laying trail and there's a
-// real network to look at.
-//
-// With these numbers: one deposit puts DEPOSIT_AMOUNT (40) on the ant's own
-// tile and DEPOSIT_AMOUNT * SPREAD_FRAC (12) on each open neighbor — both
-// comfortably above FOLLOW_THRESHOLD (5) after a single pass, so a trail is
-// followable the very next tick rather than needing several foragers to
-// reinforce it first. EVAPORATION_FACTOR (0.95) roughly halves a cell's
-// value every ~14 ticks, so an unreinforced crumb drops below MIN_TRAIL (1)
-// and floors to 0 well within one round trip's timescale.
-export const MAX_TRAIL = 200;
-export const EVAPORATION_FACTOR = 0.95;
-export const MIN_TRAIL = 1;
-export const SPREAD_FRAC = 0.3;
-export const FOLLOW_THRESHOLD = 5;
-export const DEPOSIT_AMOUNT = 40;
+import { MAX_TRAIL, EVAPORATION_FACTOR, MIN_TRAIL, SPREAD_FRAC, FOLLOW_THRESHOLD } from "./params";
 
 export type TrailField = {
     width: number;
@@ -90,11 +73,11 @@ export function deposit(field: TrailField, x: number, y: number, amount: number)
     return { ...field, cells };
 }
 
-export function evaporate(field: TrailField): TrailField {
+export function evaporate(field: TrailField, factor: number = EVAPORATION_FACTOR): TrailField {
     const cells = field.cells.slice();
 
     for (let i = 0; i < cells.length; i++) {
-        const decayed = cells[i] * EVAPORATION_FACTOR;
+        const decayed = cells[i] * factor;
         cells[i] = decayed < MIN_TRAIL ? 0 : decayed;
     }
 

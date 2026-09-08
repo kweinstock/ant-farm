@@ -14,17 +14,7 @@
 // rememberFoodSite from inside that handler) — there's no separate
 // "route worked" signal to track, so nothing here needs a counter.
 import type { Position } from "../world/grid";
-
-// UNTUNED STARTING POINTS, same spirit as pheromones.ts's constants.
-// MAX_REMEMBERED (3) is decision 5's own number. MEMORY_TTL_TICKS is sized
-// against world/surface.ts's PILE_DECAY_TICKS (400) — a remembered site is
-// "a place that had food," and once the pile there has had time to fully
-// decay, walking back to it on memory alone is more likely to waste a trip
-// than pay off. Set a bit below PILE_DECAY_TICKS rather than equal to it,
-// since remembering happens at the moment of a successful pickup, which is
-// itself already sometime after the pile spawned at ageTicks: 0.
-export const MAX_REMEMBERED = 3;
-export const MEMORY_TTL_TICKS = 300;
+import { MAX_REMEMBERED, MEMORY_TTL_TICKS } from "../params";
 
 export type AntMemory = {
     foodSites: { pos: Position; tick: number }[];

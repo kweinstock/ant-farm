@@ -30,7 +30,13 @@ describe("pheromone trails in the running sim", () => {
         const pile: FoodPile = { id: "pile-t", pos: pilePos, amount: 5000, ageTicks: 0 };
         state.surface.foodPiles.push(pile);
 
-        for (let t = 0; t < 400; t++) state = step(state, 1).state;
+        // 200 ticks: long enough for a trail network to build up, short
+        // enough that Phase 5's exit predator (which camps the hole every
+        // forager funnels through) hasn't had a reliable chance to wipe this
+        // deliberately tiny 5-forager colony out from under the test. Trail
+        // *formation* is what this case checks — survival under the predator
+        // is balance.test.ts's job.
+        for (let t = 0; t < 200; t++) state = step(state, 1).state;
 
         const cells = state.surface.trail.cells;
         const w = state.surface.trail.width;

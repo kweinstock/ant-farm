@@ -1,12 +1,184 @@
-// ALL balance constants in one place, separated from logic so tuning never means
-// editing behavior files. Imported (read-only) across src/sim and re-exported
-// from src/sim/index.ts.
+// ALL balance constants in one place. Flat named exports (not a nested
+// object) so call sites are unchanged — only the import path moves, which is
+// what keeps this migration a pure relocation with no behavior change.
+// Re-exported from src/sim/index.ts.
 //
-// Groups: energy costs + regen, starvation thresholds, forage risk curve,
-// pheromone deposit/diffuse/evaporate rates, queen laying curve coefficients,
-// brood stage durations, mutation magnitude, weather transition matrix,
-// resource decay/evaporation rates, predator frequency, disease transmission.
-//
-// Changing a number here should never break determinism — it just changes the
-// trajectory. Keep values as plain literals (no computed expressions that could
-// reorder).
+// DETERMINISM: every value here is a literal. WEATHER_MATRIX's rows must be
+// authored by hand in a fixed key order — no Object.fromEntries, no .map,
+// nothing computed. A given ColonyState always steps to exactly one next
+// state regardless of how these numbers are set, which is what
+// determinism.test.ts guards. Note that changing a *duration* constant
+// (WEATHER_*_DURATION, PREDATOR_*_DURATION) shifts WHICH ticks consume an
+// extra rng() call for a transition roll, so it re-phases the whole RNG
+// stream from that point — a re-tuned run diverges from an old seed's run.
+// That's expected; it's "different trajectory," not "non-deterministic."
+
+// ---- Nest / surface dimensions (structural — changing these needs layout regen) ----
+export const GRID_WIDTH = 24;
+export const GRID_HEIGHT = 16;
+export const SURFACE_WIDTH = 40;
+export const SURFACE_HEIGHT = 28;
+
+// ---- Colony seed & food economy ----
+export const STARTER_WORKER_COUNT = 5;
+export const STARTING_FOOD_STORE = 400;
+export const FOOD_STORE_CAP = 500;
+export const FORAGER_LOAD = 100;
+export const EAT_AMOUNT = 50;
+
+// ---- Ant energy & lifespan ----
+export const STARTING_ENERGY = 1500;
+export const MAX_ENERGY = 1500;
+export const HUNGER_THRESHOLD = 0.5;
+export const MIN_LIFESPAN_TICKS = 500;
+export const MAX_LIFESPAN_TICKS = 1000;
+export const QUEEN_MIN_LIFESPAN_TICKS = 4000;
+export const QUEEN_MAX_LIFESPAN_TICKS = 7000;
+export const METABOLISM_COST = 1;
+
+// ---- Jobs, castes, movement, senses ----
+export const NURSE_AGE_THRESHOLD_TICKS = 150;
+export const NURSERY_TILE_CAPACITY = 3;
+export const NURSE_EGG_CAPACITY = 3;
+export const SIGHT_RADIUS = 8;
+export const NOISE_PROBABILITY = 0.2;
+
+// ---- Queen & brood ----
+export const BASE_LAY_PROBABILITY = 0.1;
+export const POPULATION_SOFT_TARGET = 30;
+export const EGG_DURATION_TICKS = 30;
+export const LARVA_DURATION_TICKS = 60;
+export const PUPA_DURATION_TICKS = 50;
+
+// ---- Foraging memory ----
+export const MAX_REMEMBERED = 3;
+export const MEMORY_TTL_TICKS = 300;
+
+// ---- Pheromones ----
+export const MAX_TRAIL = 200;
+export const EVAPORATION_FACTOR = 0.95;
+export const MIN_TRAIL = 1;
+export const SPREAD_FRAC = 0.3;
+export const FOLLOW_THRESHOLD = 5;
+export const DEPOSIT_AMOUNT = 40;
+
+// ---- Surface food piles ----
+export const MAX_PILES = 10;
+export const PILE_START_AMOUNT = 250;
+export const PILE_SPAWN_CHANCE = 0.05;
+export const PILE_DECAY_TICKS = 400;
+export const HOLE_EXCLUSION_RADIUS = 5;
+export const MAX_SPAWN_ATTEMPTS = 20;
+
+// ---- Corpses & undertaking ----
+export const UNDERTAKER_PER_CORPSE = 0.5;
+export const MAX_UNDERTAKER_FRACTION = 0.3;
+export const CORPSE_DECAY_TICKS = 600;
+export const CORPSE_PER_GRAVE_TILE = 2;
+
+// ---- Surface hazard (Phase 4 orphans, now the base layer under the predator) ----
+export const SURFACE_DEATH_CHANCE = 0.0004;
+export const WANDER_EXPOSURE = 2.5;
+
+// ==================== Environment (Phase 5) ====================
+
+// ---- Clock ----
+export const DAY_LENGTH_TICKS = 1000;
+export const DAWN_START = 0.2;
+export const DAY_START = 0.3;
+export const DUSK_START = 0.75;
+export const NIGHT_START = 0.85;
+
+// ---- Calendar ----
+export const DAYS_PER_SEASON = 2;
+export const DAYS_PER_YEAR = 80;
+
+// ---- Weather ----
+import type { Season } from "./environment/season";
+import type { WeatherKind } from "./environment/weather";
+// Each row: next-weather-kind probabilities for (season, currentKind),
+// hand-authored, keys in a fixed order. Rows need not sum to look "clean" —
+// advanceWeather normalizes / walks a cumulative sum, whichever hazards.ts
+// ends up doing — but they must always sum to 1 exactly as written here.
+export const WEATHER_MATRIX: Record<Season, Record<WeatherKind, Record<WeatherKind, number>>> = {
+    SPRING: {
+        CLEAR: { CLEAR: 0.55, RAIN: 0.35, WIND: 0.1, HEAT: 0, SNOW: 0 },
+        RAIN: { CLEAR: 0.5, RAIN: 0.4, WIND: 0.1, HEAT: 0, SNOW: 0 },
+        WIND: { CLEAR: 0.6, RAIN: 0.2, WIND: 0.2, HEAT: 0, SNOW: 0 },
+        HEAT: { CLEAR: 1, RAIN: 0, WIND: 0, HEAT: 0, SNOW: 0 },
+        SNOW: { CLEAR: 1, RAIN: 0, WIND: 0, HEAT: 0, SNOW: 0 },
+    },
+    SUMMER: {
+        CLEAR: { CLEAR: 0.6, RAIN: 0.15, WIND: 0.1, HEAT: 0.15, SNOW: 0 },
+        RAIN: { CLEAR: 0.55, RAIN: 0.35, WIND: 0.1, HEAT: 0, SNOW: 0 },
+        WIND: { CLEAR: 0.65, RAIN: 0.15, WIND: 0.2, HEAT: 0, SNOW: 0 },
+        HEAT: { CLEAR: 0.5, RAIN: 0.05, WIND: 0.05, HEAT: 0.4, SNOW: 0 },
+        SNOW: { CLEAR: 1, RAIN: 0, WIND: 0, HEAT: 0, SNOW: 0 },
+    },
+    AUTTMN: {
+        CLEAR: { CLEAR: 0.55, RAIN: 0.3, WIND: 0.15, HEAT: 0, SNOW: 0 },
+        RAIN: { CLEAR: 0.5, RAIN: 0.35, WIND: 0.15, HEAT: 0, SNOW: 0 },
+        WIND: { CLEAR: 0.55, RAIN: 0.2, WIND: 0.25, HEAT: 0, SNOW: 0 },
+        HEAT: { CLEAR: 1, RAIN: 0, WIND: 0, HEAT: 0, SNOW: 0 },
+        SNOW: { CLEAR: 0.7, RAIN: 0, WIND: 0.1, HEAT: 0, SNOW: 0.2 },
+    },
+    WINTER: {
+        CLEAR: { CLEAR: 0.5, RAIN: 0.05, WIND: 0.15, HEAT: 0, SNOW: 0.3 },
+        RAIN: { CLEAR: 0.4, RAIN: 0.2, WIND: 0.1, HEAT: 0, SNOW: 0.3 },
+        WIND: { CLEAR: 0.45, RAIN: 0.05, WIND: 0.2, HEAT: 0, SNOW: 0.3 },
+        HEAT: { CLEAR: 1, RAIN: 0, WIND: 0, HEAT: 0, SNOW: 0 },
+        SNOW: { CLEAR: 0.35, RAIN: 0, WIND: 0.1, HEAT: 0, SNOW: 0.55 },
+    },
+};
+export const WEATHER_MIN_DURATION: Record<WeatherKind, number> = {
+    CLEAR: 60, RAIN: 40, WIND: 30, HEAT: 40, SNOW: 50,
+};
+export const WEATHER_MAX_DURATION: Record<WeatherKind, number> = {
+    CLEAR: 200, RAIN: 120, WIND: 80, HEAT: 100, SNOW: 150,
+};
+export const FORECAST_LENGTH = 3;
+
+// ---- Temperature ----
+export const BASE_TEMP: Record<Season, number> = {
+    SPRING: 15, SUMMER: 28, AUTTMN: 12, WINTER: -2,
+};
+export const NIGHT_TEMP_DROP = 8;
+export const DUSK_TEMP_DROP = 3;
+export const WEATHER_TEMP_MOD: Record<WeatherKind, number> = {
+    CLEAR: 0, RAIN: -3, WIND: -2, HEAT: 8, SNOW: -10,
+};
+export const DEPTH_GRADIENT_PER_ROW = 0.6;
+export const UNDERGROUND_STABLE_TEMP = 13;
+
+// ---- Cold death ----
+export const COLD_DEATH_TEMP = -5;
+export const COLD_DEATH_CHANCE_AT_ZERO = 0.0002; // per degree below COLD_DEATH_TEMP
+
+// ---- Predator ----
+export const PREDATOR_APPEAR_CHANCE = 0.0003;
+export const PREDATOR_SEASON_MULT: Record<Season, number> = {
+    SPRING: 1, SUMMER: 1.3, AUTTMN: 1, WINTER: 0.4,
+};
+export const PREDATOR_WEATHER_MULT: Record<WeatherKind, number> = {
+    CLEAR: 1, RAIN: 0.5, WIND: 0.8, HEAT: 1, SNOW: 0.3,
+};
+export const PREDATOR_MIN_DURATION = 30;
+export const PREDATOR_MAX_DURATION = 100;
+export const PREDATOR_STRIKE_RADIUS = 4;
+export const PREDATOR_STRIKE_CHANCE = 0.05;
+
+// ---- Season scalars ----
+export const SEASON_FORAGE_ABUNDANCE: Record<Season, number> = {
+    SPRING: 1.2, SUMMER: 1, AUTTMN: 0.9, WINTER: 0.3,
+};
+export const SEASON_LAY_FACTOR: Record<Season, number> = {
+    SPRING: 1.3, SUMMER: 1, AUTTMN: 0.8, WINTER: 0.2,
+};
+export const SEASON_BROOD_SPEED: Record<Season, number> = {
+    SPRING: 1.1, SUMMER: 1, AUTTMN: 0.9, WINTER: 0.6,
+};
+
+// ---- Weather effects ----
+export const RAIN_EVAPORATION_FACTOR = 0.85; // replaces EVAPORATION_FACTOR while raining
+export const WIND_EXPOSURE_MULT = 1.5;
+export const RAIN_EXPOSURE_MULT = 1.3;

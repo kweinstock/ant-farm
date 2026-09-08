@@ -6,6 +6,7 @@
 // per-tile distance fields already give movement everything it needs this
 // phase; build the graph only if a later phase wants higher-level routing
 // ("go through commons, avoid the nursery").
+import { GRID_HEIGHT, GRID_WIDTH } from "../params";
 import { createGrid, getIndex, manhattanDistance, passableNeighbors, setTile, TILE, type Grid, type Position } from "./grid";
 
 export type ChamberRole = "QUEEN" | "NURSERY" | "FOOD_STORAGE" | "COMMONS" | "EXIT";
@@ -42,12 +43,6 @@ type TunnelSegment = {
     from: Position;
     to: Position;
 };
-
-// This layout assumes exactly this grid size — see createStarterNest's
-// runtime check below for why a mismatch fails loudly instead of silently
-// corrupting the nest.
-export const GRID_WIDTH = 24;
-export const GRID_HEIGHT = 16;
 
 // Hand-authored, matching the ASCII sketch: queen chamber deep and central,
 // nursery immediately beside it, food store and commons off a central

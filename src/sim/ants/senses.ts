@@ -6,7 +6,6 @@
 // unrelated grids would produce.
 
 import type { Ant } from "./ant";
-import { MAX_ENERGY } from "./ant";
 import { chamberAt, exitMouth, type ChamberRole } from "../world/nest";
 import { nearestPile, inGraveyard, graveyardSlot, type FoodPileId } from "../world/surface";
 import { manhattanDistance, type Position } from "../world/grid";
@@ -15,18 +14,7 @@ import type { BroodId } from "../colony/brood";
 import { corpseById } from "../corpses";
 import { strongestPassableNeighbor } from "../pheromones";
 import { bestRememberedSite } from "./memory";
-
-// How far (Manhattan tiles) a forager can "notice" a pile it hasn't already
-// reached. Without this, nearestPile's result would be visible from
-// anywhere on the surface the instant a pile spawns, and every hungry
-// forager would beeline straight at it — fine once a pile IS known, wrong
-// for how it gets discovered. Outside this radius of every pile,
-// nearestFoodPilePos just isn't set, so decideForager (file 7) falls
-// through to surfaceWander instead of stepToward. Untuned — 8 is "notices
-// something roughly a fifth of the way across a 40-wide surface," not a
-// derived value; revisit alongside the economy probe if foragers seem to
-// wander forever or find piles too easily.
-export const SIGHT_RADIUS = 8;
+import { MAX_ENERGY, SIGHT_RADIUS } from "../params";
 
 export type Perception = {
     where: "nest" | "surface";

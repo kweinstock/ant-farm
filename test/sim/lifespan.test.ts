@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createInitialState } from "../../src/sim/state";
-import { MAX_LIFESPAN_TICKS, MIN_LIFESPAN_TICKS } from "../../src/sim/ants/ant";
+import { MAX_LIFESPAN_TICKS, MIN_LIFESPAN_TICKS } from "../../src/sim/params";
 import { step } from "../../src/sim";
 
 describe("ant lifespan", () => {
