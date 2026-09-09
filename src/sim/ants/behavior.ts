@@ -19,6 +19,10 @@ import { decideForager } from "./foraging";
 import { decideUndertaker } from "./undertaking";
 import { HUNGER_THRESHOLD, NURSE_EGG_CAPACITY } from "../params";
 
+function samePos(a: Position, b: Position): boolean {
+    return a.x === b.x && a.y === b.y;
+}
+
 export type Action =
     | { type: "goto"; role: ChamberRole }
     | { type: "pickUpEgg" }
@@ -47,9 +51,18 @@ export function decide(ant: Ant, perception: Perception): Action {
         return perception.atHole ? { type: "crossExit" } : { type: "surfaceStep", target: perception.holePos };
     }
 
-    // Rule 1: carrying an egg — get it to the nursery.
+    // Rule 1: carrying an egg — walk it to a specific free nursery tile and
+    // set it down there (not just "reach the room and drop it anywhere").
     if (perception.carrying.length > 0) {
-        return perception.currentChamber === "NURSERY" ? { type: "placeEgg" } : { type: "goto", role: "NURSERY" };
+        const target = perception.nurseryPlacementPos;
+        if (target === undefined) {
+            // Every nursery tile is occupied — wait near one until a slot
+            // frees (an eclosion). The lay gate bounds how long this lasts.
+            return { type: "goto", role: "NURSERY" };
+        }
+        return samePos(ant.location.pos, target)
+            ? { type: "placeEgg" }
+            : { type: "moveToNestPoint", target };
     }
 
     // Rule 2: hungry — go eat, wherever else you were headed. Explicitly
@@ -71,14 +84,20 @@ export function decide(ant: Ant, perception: Perception): Action {
         return decideUndertaker(perception);
     }
 
-    // Rule 4: a nurse with room to carry more and eggs waiting — go collect
-    // one.
+    // Rule 4: a nurse with room to carry more and eggs waiting — walk onto
+    // the egg's tile, then pick it up.
     if (
         ant.job === "NURSE" &&
         perception.carrying.length < NURSE_EGG_CAPACITY &&
         perception.eggsAvailableInQueenChamber
     ) {
-        return perception.currentChamber === "QUEEN" ? { type: "pickUpEgg" } : { type: "goto", role: "QUEEN" };
+        const target = perception.queenEggPos;
+        if (target === undefined) {
+            return { type: "goto", role: "QUEEN" };
+        }
+        return samePos(ant.location.pos, target)
+            ? { type: "pickUpEgg" }
+            : { type: "moveToNestPoint", target };
     }
 
     // Rule 5: any forager, nest or surface, hands off entirely to

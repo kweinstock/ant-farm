@@ -9,7 +9,7 @@
 import type { Ant, AntId } from "../ants/ant";
 import { createWorker } from "../ants/ant";
 import type { ColonyState } from "../state";
-import { chamberAt, tilesOf } from "../world/nest";
+import { chamberAt } from "../world/nest";
 import type { Position } from "../world/grid";
 import { EGG_DURATION_TICKS, LARVA_DURATION_TICKS, PUPA_DURATION_TICKS } from "../params";
 import { broodSpeed } from "../environment/season";
@@ -48,13 +48,6 @@ export function advanceBrood(state: ColonyState): {brood: Brood[]; newAdults: An
     let nextAntId = state.nextAntId;
     let rngSeed = state.rngSeed;
 
-    const nurseryTiles = tilesOf(state.nest, "NURSERY");
-    // Any nursery tile works as an eclosion spawn point — one physical room,
-    // not meaningfully different spots, same reasoning state.ts uses for the
-    // queen's own starting tile. Falls back to (0,0) only in the degenerate
-    // case of an empty NURSERY chamber, which the hand-authored layout never
-    // actually produces.
-    const eclosionPosition: Position = nurseryTiles[0] ?? {x: 0, y: 0}
     const speed = broodSpeed(state.env.season);
     const eggDuration = EGG_DURATION_TICKS / speed;
     const larvaDuration = LARVA_DURATION_TICKS / speed;
@@ -98,8 +91,12 @@ export function advanceBrood(state: ColonyState): {brood: Brood[]; newAdults: An
             const antId = `ant-${nextAntId}`;
             nextAntId += 1;
 
-            const newAdult = createWorker(antId, eclosionPosition, rngSeed)
-            rngSeed = newAdult.seed;            
+            // Eclose exactly where the pupa was — that tile is a NURSERY tile
+            // by the isPlaced guard above. Phase 6: with multiple nurseries a
+            // fixed "first nursery tile" spawn point teleported every newborn
+            // to NURSERY-0 no matter which nursery it developed in.
+            const newAdult = createWorker(antId, { ...entry.position }, rngSeed)
+            rngSeed = newAdult.seed;
             newAdults.push(newAdult.ant);
             // Not pushed to remainingBrood — this entry is gone, replaced by
             // the adult above, which frees its nursery tile for whatever

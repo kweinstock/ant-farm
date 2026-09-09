@@ -10,7 +10,7 @@ export const SOURCE = "local" as const;
 // Pixels per NEST grid cell (render/nest-view.ts). The surface uses its own
 // SURFACE_CELL_SIZE below. Keep each the one shared source instead of
 // hard-coding the number across render modules.
-export const CELL_SIZE = 40;
+export const CELL_SIZE = 14;
 
 // How often (ms) local mode calls step() — deliberately NOT tied to
 // requestAnimationFrame's ~60fps. rAF drives drawing only (render/engine.ts);
@@ -22,7 +22,7 @@ export const TICK_INTERVALS_MS = 100;
 // The surface (40x28) at CELL_SIZE would render nearly twice as wide as the
 // nest (24x16) — a separate, smaller cell size keeps the two views a
 // comparable on-screen size instead of the surface dwarfing the nest.
-export const SURFACE_CELL_SIZE = 20;
+export const SURFACE_CELL_SIZE = 6;
 
 // Which pane(s) ui/view-switch.ts shows a fresh visitor with no stored
 // preference yet. "split" for both side-by-side/stacked; "nest"/"surface"

@@ -14,7 +14,7 @@
 // phase (localStorage-backed, same pattern as view-switch.ts's toggles).
 import type { ColonyState } from "../../sim/state";
 import type { TuningStats } from "../main";
-import { tilesOf, chamberAt } from "../../sim/world/nest";
+import { allTilesOf, chamberAt } from "../../sim/world/nest";
 import { corpseNeedsUndertaker } from "../../sim/corpses";
 import {
     HUNGER_THRESHOLD,
@@ -246,7 +246,7 @@ function buildText(state: ColonyState, stats: TuningStats): string {
     ]);
 
     // ---- Colony structure ----
-    const nurseryCapacity = tilesOf(state.nest, "NURSERY").length * NURSERY_TILE_CAPACITY;
+    const nurseryCapacity = allTilesOf(state.nest, "NURSERY").length * NURSERY_TILE_CAPACITY;
     const nurseryUtil = nurseryCapacity > 0 ? placedInNursery / nurseryCapacity : 0;
 
     let pendingCorpses = 0;

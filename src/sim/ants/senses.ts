@@ -6,7 +6,7 @@
 // unrelated grids would produce.
 
 import type { Ant } from "./ant";
-import { chamberAt, exitMouth, type ChamberRole } from "../world/nest";
+import { chamberAt, chamberIdAt, exitMouth, type ChamberId, type ChamberRole } from "../world/nest";
 import { nearestPile, inGraveyard, graveyardSlot, type FoodPileId } from "../world/surface";
 import { manhattanDistance, type Position } from "../world/grid";
 import type { ColonyState } from "../state";
@@ -14,11 +14,19 @@ import type { BroodId } from "../colony/brood";
 import { corpseById } from "../corpses";
 import { strongestPassableNeighbor } from "../pheromones";
 import { bestRememberedSite } from "./memory";
-import { MAX_ENERGY, SIGHT_RADIUS } from "../params";
+import { MAX_ENERGY, NURSERY_TILE_CAPACITY, SIGHT_RADIUS } from "../params";
 
 export type Perception = {
     where: "nest" | "surface";
     currentChamber: ChamberRole | undefined;
+    currentChamberId: ChamberId | undefined;
+    // The exact tile a NURSE should walk to for its current brood task —
+    // the tile an uncarried egg is sitting on (to fetch), or the nearest
+    // nursery tile with a free slot (to place). Undefined when there's no
+    // egg waiting / nowhere with room. behavior.ts routes the ant tile-by-
+    // tile to these rather than "close enough, anywhere in the room".
+    queenEggPos: Position | undefined;
+    nurseryPlacementPos: Position | undefined;
     atExitMouth: boolean;
     atHole: boolean;
     holePos: Position;
@@ -42,6 +50,56 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
     const pos = ant.location.pos;
 
     const currentChamber = where === "nest" ? chamberAt(state.nest, pos) : undefined;
+    const currentChamberId = where === "nest" ? chamberIdAt(state.nest, pos) : undefined;
+
+    // Nearest uncarried egg still in a QUEEN chamber — the tile a fetching
+    // nurse walks onto before pickUpEgg fires. (In practice every egg sits on
+    // the queen's own tile, since she doesn't move yet.)
+    let queenEggPos: Position | undefined;
+    if (where === "nest") {
+        let best = Infinity;
+        for (const brood of state.brood) {
+            if (brood.stage !== "EGG" || brood.carriedBy !== undefined) continue;
+            if (chamberAt(state.nest, brood.position) !== "QUEEN") continue;
+            const d = manhattanDistance(brood.position, pos);
+            if (d < best) {
+                best = d;
+                queenEggPos = brood.position;
+            }
+        }
+    }
+
+    // The NURSERY tile a carrying nurse walks onto before placeEgg fires.
+    // Brood spreads out before it stacks: pick the tile with the FEWEST
+    // occupants (nearest one, to break ties), so every tile gets one egg
+    // before any gets two, and so on up to NURSERY_TILE_CAPACITY. Counts
+    // every uncarried brood entry per tile — larvae/pupae hold a tile until
+    // they eclose — matching jobs.ts's placeEgg check.
+    let nurseryPlacementPos: Position | undefined;
+    if (where === "nest" && ant.carrying.length > 0) {
+        const occupancy = new Map<string, number>();
+        for (const brood of state.brood) {
+            if (brood.carriedBy !== undefined) continue;
+            if (chamberAt(state.nest, brood.position) !== "NURSERY") continue;
+            const key = `${brood.position.x},${brood.position.y}`;
+            occupancy.set(key, (occupancy.get(key) ?? 0) + 1);
+        }
+        let bestFill = NURSERY_TILE_CAPACITY;
+        let bestDist = Infinity;
+        for (const chamber of state.nest.chambers) {
+            if (chamber.role !== "NURSERY") continue;
+            for (const tile of chamber.tiles) {
+                const fill = occupancy.get(`${tile.x},${tile.y}`) ?? 0;
+                if (fill >= NURSERY_TILE_CAPACITY) continue;
+                const d = manhattanDistance(tile, pos);
+                if (fill < bestFill || (fill === bestFill && d < bestDist)) {
+                    bestFill = fill;
+                    bestDist = d;
+                    nurseryPlacementPos = tile;
+                }
+            }
+        }
+    }
 
     const mouth = where === "nest" ? exitMouth(state.nest) : undefined;
     const atExitMouth = mouth !== undefined && pos.x === mouth.x && pos.y === mouth.y;
@@ -115,6 +173,9 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
     return {
         where,
         currentChamber,
+        currentChamberId,
+        queenEggPos,
+        nurseryPlacementPos,
         atExitMouth,
         atHole,
         holePos,

@@ -7,7 +7,7 @@
 // share, so this absorbs what used to be three separate files instead of
 // importing them piecemeal. PHASE 3c folds corpses into that same unit.
 import { tileAt, TILE, type Grid } from "../../sim/world/grid";
-import { chamberAt, tilesOf, type ChamberRole, type Nest } from "../../sim/world/nest";
+import { chamberAt, allTilesOf, type ChamberRole, type Nest } from "../../sim/world/nest";
 import type { ColonyState } from "../../sim/state";
 import type { Brood } from "../../sim/colony/brood";
 import type { Corpse } from "../../sim/corpses";
@@ -86,7 +86,7 @@ function renderTiles(ctx: CanvasRenderingContext2D, grid: Grid, nest: Nest): voi
 }
 
 function renderFoodGauge(ctx: CanvasRenderingContext2D, state: ColonyState): void {
-    const tiles = tilesOf(state.nest, "FOOD_STORAGE");
+    const tiles = allTilesOf(state.nest, "FOOD_STORAGE");
     if (tiles.length === 0) {
         return;
     }

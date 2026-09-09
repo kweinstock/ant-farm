@@ -17,8 +17,14 @@ import { METABOLISM_COST, NURSE_AGE_THRESHOLD_TICKS } from "../params";
 import type { Ant } from "./ant";
 import { assignJob } from "./jobs";
 
+// The two RNG-free ways an ant can die at end-of-tick. `undefined` = survived
+// this metering pass (it may still die to a surface-hazard / predator / cold
+// roll back in index.ts, which owns the rng). Returned explicitly so callers
+// don't have to re-derive "was it age or energy?" from the metered ant and
+// risk disagreeing with the check here.
+export type MeterDeath = "oldAge" | "starvation" | undefined;
 
-export function ageAndMeter(ant: Ant): {ant: Ant, isDead: boolean} {
+export function ageAndMeter(ant: Ant): { ant: Ant; isDead: boolean; cause: MeterDeath } {
     const ageTicks = ant.ageTicks + 1;
 
     // The queen doesn't burn energy yet. She's not in the worker
@@ -29,7 +35,10 @@ export function ageAndMeter(ant: Ant): {ant: Ant, isDead: boolean} {
     // (QUEEN_*_LIFESPAN_TICKS), which the colony has no answer for until
     // colony/caste.ts raises a replacement.
     const energy = ant.caste === "QUEEN" ? ant.energy : ant.energy - METABOLISM_COST;
-    const isDead = energy <= 0 || ageTicks >= ant.lifespanTicks;
+
+    // Starvation is checked first: an ant that has run its energy to zero is
+    // dead of starvation even if it also happens to be at its lifespan.
+    const cause: MeterDeath = energy <= 0 ? "starvation" : ageTicks >= ant.lifespanTicks ? "oldAge" : undefined;
 
     const crossedThreshold = ant.ageTicks < NURSE_AGE_THRESHOLD_TICKS && ageTicks >= NURSE_AGE_THRESHOLD_TICKS;
 
@@ -37,6 +46,7 @@ export function ageAndMeter(ant: Ant): {ant: Ant, isDead: boolean} {
 
     return {
         ant: {...ant, ageTicks, energy, job},
-        isDead,
+        isDead: cause !== undefined,
+        cause,
     };
 }

@@ -179,11 +179,10 @@ function singleTick(state: ColonyState): TickResult {
         .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
     for (const worker of workers) {
-        const {ant: metered, isDead: agedDead} = ageAndMeter(worker);
+        const {ant: metered, isDead: agedDead, cause: meterCause} = ageAndMeter(worker);
 
         if (agedDead) {
-            const cause = metered.energy <= 0 ? "starvation" : "oldAge";
-            currentState = killWorker(currentState, metered, cause, events);
+            currentState = killWorker(currentState, metered, meterCause ?? "oldAge", events);
             continue;
         }
 

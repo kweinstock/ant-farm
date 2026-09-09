@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createInitialState } from "../../src/sim/state";
 import { step } from "../../src/sim";
 import { inGraveyard } from "../../src/sim/world/surface";
+import { allTilesOf } from "../../src/sim/world/nest";
 import { assignUndertakers, type Corpse } from "../../src/sim/corpses";
 import { CORPSE_DECAY_TICKS, UNDERTAKER_PER_CORPSE } from "../../src/sim/params";
 import type { Ant } from "../../src/sim/ants/ant";
@@ -23,8 +24,9 @@ describe("corpses & the undertaker", () => {
         let state = createInitialState(4242);
         for (let t = 0; t < 700; t++) state = step(state, 1).state;
 
-        // Six bodies on one passable COMMONS tile.
-        const spot = { x: 12, y: 4 };
+        // Six bodies on one real passable COMMONS tile (an undertaker has to
+        // be able to physically stand on it to pick a body up).
+        const spot = allTilesOf(state.nest, "COMMONS")[0];
         const injected = Array.from({ length: 6 }, (_, i) => nestCorpse(`corpse-inj-${i}`, spot));
         const injectedIds = new Set(injected.map((c) => c.id));
         state = { ...state, corpses: [...state.corpses, ...injected] };
@@ -32,7 +34,9 @@ describe("corpses & the undertaker", () => {
         let peakCrew = 0; // undertakers assigned to one of the injected bodies
         let handledAt = -1;
 
-        for (let t = 1; t <= 500; t++) {
+        // Wider window than pre-Phase-6: the nest is ~9x bigger, so the
+        // corpse -> exit -> graveyard haul is a much longer walk.
+        for (let t = 1; t <= 900; t++) {
             state = step(state, 1).state;
 
             const crew = [...state.ants.values()].filter(
@@ -51,7 +55,7 @@ describe("corpses & the undertaker", () => {
         }
 
         // Every injected body reached the graveyard (none still loose, none
-        // decayed — 500 ticks < CORPSE_DECAY_TICKS).
+        // decayed — 900 ticks < CORPSE_DECAY_TICKS).
         expect(handledAt).toBeGreaterThan(0);
         for (const c of state.corpses.filter((c) => injectedIds.has(c.id))) {
             expect(c.location.where).toBe("surface");
@@ -66,14 +70,22 @@ describe("corpses & the undertaker", () => {
     });
 
     it("no corpses -> no undertakers, every tick", () => {
-        // First natural worker death is ~tick 500 (MIN_LIFESPAN_TICKS); stop
-        // before then so corpses.length stays 0 the whole run.
+        // With a Phase-6-sized starter workforce foraging a bigger surface, a
+        // surface-hazard death inside 400 ticks is now plausible — so this no
+        // longer asserts "zero corpses ever," just the actual invariant:
+        // whenever the corpse list is empty, nobody is on undertaker duty.
         let state = createInitialState(12345);
+        let sawEmptyTick = false;
         for (let t = 0; t < 400; t++) {
             state = step(state, 1).state;
-            expect(state.corpses.length).toBe(0);
-            expect(countUndertaking(state.ants.values())).toBe(0);
+            if (state.corpses.length === 0) {
+                sawEmptyTick = true;
+                expect(countUndertaking(state.ants.values())).toBe(0);
+            }
         }
+        // The run really did spend time with no corpses (guards against a
+        // vacuous pass).
+        expect(sawEmptyTick).toBe(true);
     });
 
     it("a corpse nobody reaches still decays out by CORPSE_DECAY_TICKS", () => {

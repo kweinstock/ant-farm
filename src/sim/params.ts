@@ -14,14 +14,18 @@
 // That's expected; it's "different trajectory," not "non-deterministic."
 
 // ---- Nest / surface dimensions (structural — changing these needs layout regen) ----
-export const GRID_WIDTH = 24;
-export const GRID_HEIGHT = 16;
-export const SURFACE_WIDTH = 40;
-export const SURFACE_HEIGHT = 28;
+export const GRID_WIDTH = 80;
+export const GRID_HEIGHT = 60;
+// Phase 6 scaled the nest up ~9x. The surface grows properly in Phase 7
+// (fertile patches + patch-biased search), so it's only bumped ~2.5x here —
+// enough to give the bigger colony room to forage without the round trip
+// outrunning the trail lifetime, which is what a full 120x84 did.
+export const SURFACE_WIDTH = 60;
+export const SURFACE_HEIGHT = 44;
 
 // ---- Colony seed & food economy ----
-export const STARTER_WORKER_COUNT = 5;
-export const STARTING_FOOD_STORE = 400;
+export const STARTER_WORKER_COUNT = 12;
+export const STARTING_FOOD_STORE = 200;
 export const FOOD_STORE_CAP = 500;
 export const FORAGER_LOAD = 100;
 export const EAT_AMOUNT = 50;
@@ -40,11 +44,11 @@ export const METABOLISM_COST = 1;
 export const NURSE_AGE_THRESHOLD_TICKS = 150;
 export const NURSERY_TILE_CAPACITY = 3;
 export const NURSE_EGG_CAPACITY = 3;
-export const SIGHT_RADIUS = 8;
+export const SIGHT_RADIUS = 11;
 export const NOISE_PROBABILITY = 0.2;
 
 // ---- Queen & brood ----
-export const BASE_LAY_PROBABILITY = 0.1;
+export const BASE_LAY_PROBABILITY = 0.3;
 export const POPULATION_SOFT_TARGET = 30;
 export const EGG_DURATION_TICKS = 30;
 export const LARVA_DURATION_TICKS = 60;
@@ -63,11 +67,13 @@ export const FOLLOW_THRESHOLD = 5;
 export const DEPOSIT_AMOUNT = 40;
 
 // ---- Surface food piles ----
-export const MAX_PILES = 10;
+// Scaled for the ~2.5x-bigger Phase 6 surface: more piles, spawning faster,
+// so a forager emerging from the hole has something within reach.
+export const MAX_PILES = 18;
 export const PILE_START_AMOUNT = 250;
-export const PILE_SPAWN_CHANCE = 0.05;
+export const PILE_SPAWN_CHANCE = 0.09;
 export const PILE_DECAY_TICKS = 400;
-export const HOLE_EXCLUSION_RADIUS = 5;
+export const HOLE_EXCLUSION_RADIUS = 6;
 export const MAX_SPAWN_ATTEMPTS = 20;
 
 // ---- Corpses & undertaking ----

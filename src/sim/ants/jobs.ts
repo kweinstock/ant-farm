@@ -17,7 +17,7 @@
 import type { Ant, AntLocation, Job } from "./ant";
 import type { Action } from "./behavior";
 import { wander, moveToward } from "./movement";
-import { chamberAt, tilesOf, exitMouth } from "../world/nest";
+import { chamberAt, exitMouth, nearestChamberField } from "../world/nest";
 import type { ColonyState } from "../state";
 import type { Brood } from "../colony/brood";
 import type { Surface } from "../world/surface";
@@ -43,6 +43,18 @@ function syncCarriedCorpse(corpses: Corpse[], antId: string, newLocation: AntLoc
     return corpses.map((corpse) => (corpse.carriedBy === antId ? { ...corpse, location: newLocation } : corpse));
 }
 
+// Count of uncarried brood physically sitting on `pos` — the per-tile
+// nursery cap is checked against this.
+function broodOnTile(state: ColonyState, pos: { x: number; y: number }): number {
+    let n = 0;
+    for (const entry of state.brood) {
+        if (entry.carriedBy === undefined && entry.position.x === pos.x && entry.position.y === pos.y) {
+            n += 1;
+        }
+    }
+    return n;
+}
+
 export function act(state: ColonyState, ant: Ant, action: Action): ActResult {
     switch (action.type) {
         case "goto": {
@@ -55,7 +67,16 @@ export function act(state: ColonyState, ant: Ant, action: Action): ActResult {
                 return { ant, brood: state.brood, foodStore: state.foodStore, surface: state.surface, corpses: state.corpses, rngSeed: state.rngSeed };
             }
 
-            const distanceField = state.nest.distanceFields[action.role];
+            // Route to the nearest instance of the role. Tile-precise brood
+            // targeting (rules 1 & 4 -> moveToNestPoint) does the fine
+            // approach and the capacity check; `goto` is just "get to the
+            // right kind of room".
+            const distanceField = nearestChamberField(state.nest, action.role, ant.location.pos);
+
+            if (!distanceField) {
+                return { ant, brood: state.brood, foodStore: state.foodStore, surface: state.surface, corpses: state.corpses, rngSeed: state.rngSeed };
+            }
+
             const result = moveToward(state.grid, distanceField, ant.location.pos, state.rngSeed);
             const location: AntLocation = { where: "nest", pos: result.position };
 
@@ -90,11 +111,17 @@ export function act(state: ColonyState, ant: Ant, action: Action): ActResult {
         }
 
         case "pickUpEgg": {
+            // The nurse walked onto the egg's tile (behavior.ts rule 4) —
+            // pick up an egg that's actually there, not one anywhere in the
+            // chamber.
+            const here = ant.location.pos;
             const egg = state.brood.find(
                 (entry) =>
                     entry.stage === "EGG" &&
-                    chamberAt(state.nest, entry.position) === "QUEEN" &&
-                    entry.carriedBy === undefined
+                    entry.carriedBy === undefined &&
+                    entry.position.x === here.x &&
+                    entry.position.y === here.y &&
+                    chamberAt(state.nest, entry.position) === "QUEEN"
             );
 
             if (!egg) {
@@ -121,25 +148,17 @@ export function act(state: ColonyState, ant: Ant, action: Action): ActResult {
             }
 
             const eggId = ant.carrying[0];
+            const here = ant.location.pos;
 
-            const occupancy = new Map<string, number>();
-            for (const entry of state.brood) {
-                if (entry.carriedBy === undefined && chamberAt(state.nest, entry.position) === "NURSERY") {
-                    const key = `${entry.position.x},${entry.position.y}`;
-                    occupancy.set(key, (occupancy.get(key) ?? 0) + 1);
-                }
-            }
-
-            const freeTile = tilesOf(state.nest, "NURSERY").find(
-                (tile) => (occupancy.get(`${tile.x},${tile.y}`) ?? 0) < NURSERY_TILE_CAPACITY
-            );
-
-            if (!freeTile) {
+            // The nurse walked onto a specific free nursery tile
+            // (behavior.ts rule 1 -> perception.nurseryPlacementPos). Set the
+            // egg down here only if this really is a NURSERY tile with room.
+            if (chamberAt(state.nest, here) !== "NURSERY" || broodOnTile(state, here) >= NURSERY_TILE_CAPACITY) {
                 return { ant, brood: state.brood, foodStore: state.foodStore, surface: state.surface, corpses: state.corpses, rngSeed: state.rngSeed };
             }
 
             const brood = state.brood.map((entry) =>
-                entry.id === eggId ? { ...entry, position: freeTile, carriedBy: undefined } : entry
+                entry.id === eggId ? { ...entry, position: { x: here.x, y: here.y }, carriedBy: undefined } : entry
             );
 
             return {

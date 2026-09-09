@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createInitialState } from "../../src/sim/state";
 import { step } from "../../src/sim";
-import { tilesOf } from "../../src/sim/world/nest";
+import { allTilesOf } from "../../src/sim/world/nest";
 import { NURSERY_TILE_CAPACITY } from "../../src/sim/params";
 
 // Tune once real runs show what "sane" looks like. The lower bound treats
@@ -21,7 +21,7 @@ describe("population dynamics", () => {
         // The real brood ceiling in 3a: nursery-tile count x per-tile cap.
         // queen.ts gates laying on state.brood.length staying under this, so
         // brood can never run away even if the nurses fall behind.
-        const maxBrood = tilesOf(state.nest, "NURSERY").length * NURSERY_TILE_CAPACITY;
+        const maxBrood = allTilesOf(state.nest, "NURSERY").length * NURSERY_TILE_CAPACITY;
 
         for (
             let ticksElapsed = SAMPLE_INTERVAL_TICKS;

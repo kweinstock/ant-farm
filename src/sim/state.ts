@@ -5,7 +5,8 @@
 // of a bare `position` — see ants/ant.ts. The queen's `where` is always
 // "nest"; only foragers ever set it to "surface".
 
-import { createStarterNest, tilesOf, type Nest } from "./world/nest";
+import { createStarterNest, chambersOf, allTilesOf, type Chamber, type Nest } from "./world/nest";
+import type { Position } from "./world/grid";
 import { createSurface, type Surface } from "./world/surface";
 import type { Grid } from "./world/grid";
 import { type Ant, type AntId, createQueen, createWorker } from "./ants/ant";
@@ -64,6 +65,22 @@ export type ColonyState = {
     climateOverride?: ClimateOverride;
 };
 
+function chamberCenter(chamber: Chamber): Position {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+    for (const tile of chamber.tiles) {
+        minX = Math.min(minX, tile.x);
+        maxX = Math.max(maxX, tile.x);
+        minY = Math.min(minY, tile.y);
+        maxY = Math.max(maxY, tile.y);
+    }
+
+    return {
+        x: Math.floor((minX + maxX) / 2),
+        y: Math.floor((minY + maxY) / 2),
+    }
+}
+
 export function createInitialState(seed: number, climateOverride?: ClimateOverride): ColonyState {
     const {grid, nest} = createStarterNest(GRID_WIDTH, GRID_HEIGHT);
     const surface = createSurface(SURFACE_WIDTH, SURFACE_HEIGHT);
@@ -73,11 +90,13 @@ export function createInitialState(seed: number, climateOverride?: ClimateOverri
     let currentSeed = seed;
 
     const queenId = `queen-ant-${nextAntId++}`;
-    const queen = createQueen(queenId, tilesOf(nest, "QUEEN")[0], currentSeed)
+    const queenChamber = chambersOf(nest, "QUEEN")[0];
+    const queenStart: Position = queenChamber ? chamberCenter(queenChamber) : {x: 0, y: 0};
+    const queen = createQueen(queenId, queenStart, currentSeed)
     currentSeed = queen.seed;
     ants.set(queenId, queen.ant);
 
-    const commonTiles = tilesOf(nest, "COMMONS");
+    const commonTiles = allTilesOf(nest, "COMMONS");
 
     for (let i = 0; i < STARTER_WORKER_COUNT; i++) {
         const workerId = `ant-${nextAntId++}`;

@@ -27,6 +27,9 @@ function makePerception(overrides: Partial<Perception> = {}): Perception {
     return {
         where: "nest",
         currentChamber: "COMMONS",
+        currentChamberId: undefined,
+        queenEggPos: undefined,
+        nurseryPlacementPos: undefined,
         atExitMouth: false,
         atHole: false,
         holePos: { x: 20, y: 27 },
@@ -40,23 +43,37 @@ function makePerception(overrides: Partial<Perception> = {}): Perception {
 }
 
 describe("decide — nest rules", () => {
-    it("carrying an egg heads for the nursery", () => {
+    it("carrying an egg with no free nursery tile in sight heads for the nursery to wait", () => {
         const ant = makeAnt({ job: "NURSE", carrying: ["brood-1"] });
-        expect(decide(ant, makePerception({ carrying: ["brood-1"] }))).toEqual({ type: "goto", role: "NURSERY" });
-    });
-
-    it("carrying an egg while in the nursery places it", () => {
-        const ant = makeAnt({ job: "NURSE", carrying: ["brood-1"] });
-        expect(decide(ant, makePerception({ carrying: ["brood-1"], currentChamber: "NURSERY" }))).toEqual({
-            type: "placeEgg",
+        expect(decide(ant, makePerception({ carrying: ["brood-1"], nurseryPlacementPos: undefined }))).toEqual({
+            type: "goto",
+            role: "NURSERY",
         });
     });
 
-    it("carrying an egg beats hunger (rule 1 before rule 2)", () => {
-        const ant = makeAnt({ job: "NURSE", carrying: ["brood-1"] });
+    it("carrying an egg walks toward the target free nursery tile, then places it there", () => {
+        const ant = makeAnt({ job: "NURSE", carrying: ["brood-1"], location: { where: "nest", pos: { x: 30, y: 30 } } });
+        // not on the target tile yet -> walk to it
         expect(
-            decide(ant, makePerception({ carrying: ["brood-1"], currentChamber: "FOOD_STORAGE", hungerRatio: 0.1 }))
-        ).toEqual({ type: "goto", role: "NURSERY" });
+            decide(ant, makePerception({ carrying: ["brood-1"], nurseryPlacementPos: { x: 32, y: 33 } }))
+        ).toEqual({ type: "moveToNestPoint", target: { x: 32, y: 33 } });
+        // standing on it -> place
+        const onTile = makeAnt({ job: "NURSE", carrying: ["brood-1"], location: { where: "nest", pos: { x: 32, y: 33 } } });
+        expect(
+            decide(onTile, makePerception({ carrying: ["brood-1"], nurseryPlacementPos: { x: 32, y: 33 } }))
+        ).toEqual({ type: "placeEgg" });
+    });
+
+    it("carrying an egg beats hunger (rule 1 before rule 2)", () => {
+        const ant = makeAnt({ job: "NURSE", carrying: ["brood-1"], location: { where: "nest", pos: { x: 30, y: 30 } } });
+        expect(
+            decide(ant, makePerception({
+                carrying: ["brood-1"],
+                currentChamber: "FOOD_STORAGE",
+                hungerRatio: 0.1,
+                nurseryPlacementPos: { x: 32, y: 33 },
+            }))
+        ).toEqual({ type: "moveToNestPoint", target: { x: 32, y: 33 } });
     });
 
     it("hungry in the nest heads for / eats at the food store", () => {
@@ -66,11 +83,18 @@ describe("decide — nest rules", () => {
         ).toEqual({ type: "eat" });
     });
 
-    it("a nurse with eggs waiting heads for / picks up in the queen chamber", () => {
-        const ant = makeAnt({ job: "NURSE" });
+    it("a nurse with eggs waiting walks onto the egg tile, then picks it up", () => {
+        const ant = makeAnt({ job: "NURSE", location: { where: "nest", pos: { x: 10, y: 10 } } });
+        // eggs waiting but exact tile not yet known this tick -> head for the chamber
         expect(decide(ant, makePerception({ eggsAvailableInQueenChamber: true }))).toEqual({ type: "goto", role: "QUEEN" });
+        // egg tile known, not there yet -> walk to it
         expect(
-            decide(ant, makePerception({ eggsAvailableInQueenChamber: true, currentChamber: "QUEEN" }))
+            decide(ant, makePerception({ eggsAvailableInQueenChamber: true, queenEggPos: { x: 35, y: 42 } }))
+        ).toEqual({ type: "moveToNestPoint", target: { x: 35, y: 42 } });
+        // standing on it -> pick up
+        const onEgg = makeAnt({ job: "NURSE", location: { where: "nest", pos: { x: 35, y: 42 } } });
+        expect(
+            decide(onEgg, makePerception({ eggsAvailableInQueenChamber: true, queenEggPos: { x: 35, y: 42 } }))
         ).toEqual({ type: "pickUpEgg" });
     });
 

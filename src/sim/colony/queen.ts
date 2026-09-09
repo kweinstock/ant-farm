@@ -16,8 +16,8 @@ import { ageAndMeter } from "../ants/lifecycle";
 import type { Ant } from "../ants/ant";
 import type { ColonyState } from "../state";
 import { layEgg, type Brood } from "./brood";
-import { tilesOf } from "../world/nest";
-import { BASE_LAY_PROBABILITY, POPULATION_SOFT_TARGET } from "../params";
+import { allTilesOf } from "../world/nest";
+import { BASE_LAY_PROBABILITY, NURSERY_TILE_CAPACITY, POPULATION_SOFT_TARGET } from "../params";
 import { layFactor } from "../environment/season";
 
 export type QueenTickResult = {
@@ -66,7 +66,7 @@ export function tickQueen(state: ColonyState): QueenTickResult {
     // Roll unconditionally (keeps the RNG cadence identical whether or not the
     // nursery is full), then gate on capacity.
     const roll = rng(state.rngSeed);
-    const nurseryCapacity = tilesOf(state.nest, "NURSERY").length * 3;
+    const nurseryCapacity = allTilesOf(state.nest, "NURSERY").length * NURSERY_TILE_CAPACITY;
     const shouldLay = roll.value < layProbability && state.brood.length < nurseryCapacity;
 
     const brood = shouldLay ? [...state.brood, layEgg(state)] : state.brood;

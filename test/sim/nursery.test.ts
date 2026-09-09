@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import { createInitialState } from "../../src/sim/state";
 import { step } from "../../src/sim";
-import { chamberAt } from "../../src/sim/world/nest";
+import { chamberAt, allTilesOf } from "../../src/sim/world/nest";
 import { NURSE_EGG_CAPACITY, NURSERY_TILE_CAPACITY } from "../../src/sim/params";
 
 describe("nursery / egg carrying", () => {
     it("eggs travel queen chamber -> nursery, both caps hold every tick, and adults eventually eclose", () => {
         let state = createInitialState(12345);
+        const allNurseryTiles = allTilesOf(state.nest, "NURSERY");
 
         let sawPlacedEgg = false;
         let births = 0;
@@ -37,6 +38,15 @@ describe("nursery / egg carrying", () => {
             }
             for (const count of occupancy.values()) {
                 expect(count).toBeLessThanOrEqual(NURSERY_TILE_CAPACITY);
+            }
+
+            // Brood spreads before it stacks: no tile holds 2+ while another
+            // nursery tile is still empty. (occupancy only has entries for
+            // used tiles, so "empty tiles exist" == used < total.)
+            const totalTiles = allNurseryTiles.length;
+            const maxStack = occupancy.size > 0 ? Math.max(...occupancy.values()) : 0;
+            if (occupancy.size < totalTiles) {
+                expect(maxStack).toBeLessThanOrEqual(1);
             }
         }
 

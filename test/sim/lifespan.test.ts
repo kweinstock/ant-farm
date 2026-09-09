@@ -37,6 +37,14 @@ describe("ant lifespan", () => {
         );
 
         expect(trackedDeathEvent).toBeDefined();
+        expect(trackedDeathEvent?.kind).toBe("death");
+
+        // Age always wins the race with starvation (see the comment above), so
+        // the cause must be recorded as oldAge — never starvation, and never a
+        // surface hazard (this ant dies to the lifespan check before any roll).
+        if (trackedDeathEvent?.kind === "death") {
+            expect(trackedDeathEvent.cause).toBe("oldAge");
+        }
 
         // Ties this test to the actual roll range instead of just ">0" —
         // catches an off-by-one in the death check (e.g. `>` vs `>=` against

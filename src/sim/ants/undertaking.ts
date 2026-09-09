@@ -4,11 +4,11 @@
 // halves here keeps behavior.ts's rule list and jobs.ts's switch from
 // growing undertaker-specific branches inline, same reasoning foraging.ts
 // already established for the forager round trip.
-import type { Ant } from "./ant";
+import type { Ant, AntLocation } from "./ant";
 import type { Perception } from "./senses";
 import type { Action } from "./behavior";
 import { moveToward } from "./movement";
-import { distanceField } from "../world/nest";
+import { fieldToTile } from "../world/nest";
 import type { ColonyState } from "../state";
 import type { Position } from "../world/grid";
 import type { ActResult } from "./jobs";
@@ -98,16 +98,33 @@ export function clearUndertaking(state: ColonyState, ant: Ant): ActResult {
     };
 }
 
+// Tile-precise nest walk toward an arbitrary target tile via an ad-hoc
+// single-source distance field. Used by undertakers heading to a corpse and
+// (Phase 6) by nurses walking to a specific egg / nursery tile — so it syncs
+// any cargo the mover is carrying, the same way jobs.ts's `goto` does:
+// carried eggs follow the nurse's position, a carried corpse follows too.
 export function moveToNestPoint(state: ColonyState, ant: Ant, target: Position): ActResult {
-    const field = distanceField(state.grid, [target]);
+    const field = fieldToTile(state.grid, target);
     const result = moveToward(state.grid, field, ant.location.pos, state.rngSeed);
+    const location: AntLocation = { where: "nest", pos: result.position };
+
+    const brood =
+        ant.carrying.length > 0
+            ? state.brood.map((entry) =>
+                  ant.carrying.includes(entry.id) ? { ...entry, position: result.position } : entry
+              )
+            : state.brood;
+
+    const corpses = state.corpses.some((corpse) => corpse.carriedBy === ant.id)
+        ? state.corpses.map((corpse) => (corpse.carriedBy === ant.id ? { ...corpse, location } : corpse))
+        : state.corpses;
 
     return {
-        ant: { ...ant, location: { where: "nest", pos: result.position } },
-        brood: state.brood,
+        ant: { ...ant, location },
+        brood,
         foodStore: state.foodStore,
         surface: state.surface,
-        corpses: state.corpses,
+        corpses,
         rngSeed: result.seed,
     };
 }
