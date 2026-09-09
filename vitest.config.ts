@@ -1,14 +1,15 @@
 import { defineConfig } from "vitest/config";
 
-// The sim tests step tens of thousands of ticks. Since Phase 6 grew the nest
-// (~9x) and surface, a few of them (learning, balance, determinism, surface)
-// run several seconds each and tip over vitest's 5s default when the pool is
-// under load. A generous global timeout is simpler than sprinkling per-test
-// overrides — none of these should ever legitimately take this long, so if
-// one does hit the cap it's a real hang, not a slow machine.
+// The sim tests step tens of thousands of ticks. Phase 6 grew the nest ~9x
+// and Phase 7 the surface ~2x, so several tests (balance, weather, ecology,
+// determinism, learning) run 5-25s each and tip over vitest's 5s default —
+// especially under parallel-pool load. A generous global timeout beats
+// sprinkling per-test overrides that then go stale every time the world
+// grows; individual `it(..., n)` overrides below this value have been
+// removed. If a test genuinely hits 60s it's a hang, not a slow machine.
 export default defineConfig({
     test: {
-        testTimeout: 40000,
-        hookTimeout: 40000,
+        testTimeout: 60000,
+        hookTimeout: 60000,
     },
 });

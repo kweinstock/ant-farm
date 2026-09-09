@@ -27,12 +27,12 @@
 import type { Ant, AntLocation } from "./ant";
 import type { Perception } from "./senses";
 import type { Action } from "./behavior";
-import { wander, stepToward } from "./movement";
+import { wander, stepToward, surfaceRouteStep } from "./movement";
 import { takeFromPile } from "../world/surface";
 import { depositToStore } from "../world/resources";
 import { deposit } from "../pheromones";
 import { rememberFoodSite } from "./memory";
-import { HUNGER_THRESHOLD, DEPOSIT_AMOUNT, FORAGER_LOAD } from "../params";
+import { HUNGER_THRESHOLD, DEPOSIT_AMOUNT, FORAGER_LOAD, EAT_AMOUNT, MAX_ENERGY } from "../params";
 import type { ColonyState } from "../state";
 import type { Position } from "../world/grid";
 import type { ActResult } from "./jobs";
@@ -45,9 +45,32 @@ export function decideForager(ant: Ant, perception: Perception): Action {
         return perception.atExitMouth ? { type: "crossExit" } : { type: "goto", role: "EXIT" };
     }
 
-    const goHome = ant.carryingFood > 0 || perception.hungerRatio < HUNGER_THRESHOLD;
+    const hungry = perception.hungerRatio < HUNGER_THRESHOLD;
+
+    // Hungry and carrying nothing: feed at the surface, not at the nest
+    // store. A big surface means a long walk home, and if the store has
+    // bottomed out in a food crunch that walk kills the forager before it
+    // can refuel — the colony then can't claw back out of a crash. Eating
+    // at the pile (or heading to a visible one) keeps foragers alive in the
+    // field so deliveries resume once the boom's die-off passes.
+    if (hungry && ant.carryingFood === 0) {
+        if (perception.onFoodPileId !== undefined) {
+            return { type: "eatFromPile" };
+        }
+        if (perception.nearestFoodPilePos !== undefined) {
+            return { type: "surfaceStep", target: perception.nearestFoodPilePos };
+        }
+    }
+
+    const goHome = ant.carryingFood > 0 || hungry;
     if (goHome) {
-        return perception.atHole ? { type: "crossExit" } : { type: "surfaceStep", target: perception.holePos };
+        // Routed, not greedy. A laden forager leaves a patch (obstacles
+        // clustered right there) and crosses the map to the hole — greedy
+        // stepToward stalls against those clusters, and the trail crumbs it
+        // drops on the way (applySurfaceMove) come out as a clean line home
+        // only if the path is a clean line. holePos is fixed, so the field is
+        // BFS'd once and reused for every forager forever.
+        return perception.atHole ? { type: "crossExit" } : { type: "surfaceRoute", target: perception.holePos };
     }
 
     if (perception.onFoodPileId !== undefined) {
@@ -64,6 +87,10 @@ export function decideForager(ant: Ant, perception: Perception): Action {
 
     if (perception.rememberedFoodPos !== undefined) {
         return { type: "surfaceStep", target: perception.rememberedFoodPos };
+    }
+
+    if (perception.nearestPatchTarget !== undefined) {
+        return {type: "surfaceRoute", target: perception.nearestPatchTarget};
     }
 
     return { type: "surfaceWander" };
@@ -104,8 +131,28 @@ export function depositFood(state: ColonyState, ant: Ant): ActResult {
     };
 }
 
-export function surfaceStep(state: ColonyState, ant: Ant, target: Position): ActResult {
-    const result = stepToward(state.surface.grid, ant.location.pos, target, state.rngSeed);
+export function eatFromPile(state: ColonyState, ant: Ant): ActResult {
+    const pos = ant.location.pos;
+    const pile = state.surface.foodPiles.find((p) => p.pos.x === pos.x && p.pos.y === pos.y);
+
+    if (!pile) {
+        return { ant, brood: state.brood, foodStore: state.foodStore, surface: state.surface, corpses: state.corpses, rngSeed: state.rngSeed };
+    }
+
+    const { surface, taken } = takeFromPile(state.surface, pile.id, EAT_AMOUNT);
+    const memory = rememberFoodSite(ant.memory, pile.pos, state.simTime);
+
+    return {
+        ant: { ...ant, energy: Math.min(ant.energy + taken, MAX_ENERGY), memory },
+        brood: state.brood,
+        foodStore: state.foodStore,
+        surface,
+        corpses: state.corpses,
+        rngSeed: state.rngSeed,
+    };
+}
+
+function applySurfaceMove(state: ColonyState, ant: Ant, result: { position: Position; seed: number }): ActResult {
     const location: AntLocation = { where: "surface", pos: result.position };
 
     const corpses = state.corpses.some((corpse) => corpse.carriedBy === ant.id)
@@ -124,6 +171,16 @@ export function surfaceStep(state: ColonyState, ant: Ant, target: Position): Act
         corpses,
         rngSeed: result.seed,
     };
+}
+
+export function surfaceStep(state: ColonyState, ant: Ant, target: Position): ActResult {
+    const result = stepToward(state.surface.grid, ant.location.pos, target, state.rngSeed);
+    return applySurfaceMove(state, ant, result);
+}
+
+export function surfaceRoute(state: ColonyState, ant: Ant, target: Position): ActResult {
+    const result = surfaceRouteStep(state.surface.grid, ant.location.pos, target, state.rngSeed);
+    return applySurfaceMove(state, ant, result);
 }
 
 export function surfaceWander(state: ColonyState, ant: Ant): ActResult {

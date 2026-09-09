@@ -9,7 +9,13 @@
 // chamber-to-chamber adjacency graph (the roadmap mentions one); the
 // per-chamber distance fields cover routing this phase.
 import { GRID_HEIGHT, GRID_WIDTH } from "../params";
-import { createGrid, getIndex, passableNeighbors, setTile, TILE, type Grid, type Position } from "./grid";
+import { createGrid, distanceField, fieldToTile, getIndex, setTile, TILE, UNREACHABLE_DISTANCE, type Grid, type Position } from "./grid";
+
+// Re-exported for backward compatibility — anything still importing these
+// from "./nest" (their original home before Phase 7 moved them to
+// grid.ts, where they actually belong: pure grid ops, no nest concepts)
+// keeps working unchanged.
+export { distanceField, fieldToTile, UNREACHABLE_DISTANCE };
 
 export type ChamberRole = "QUEEN" | "NURSERY" | "FOOD_STORAGE" | "COMMONS" | "EXIT";
 export type ChamberId = string;
@@ -19,12 +25,6 @@ export type Chamber = {
     role: ChamberRole;
     tiles: Position[];
 }
-
-// Sentinel for "impassable or unreachable from this role's chamber" in a
-// distance field. 0x7FFF (32767) is the max value an Int16Array's signed
-// range can hold and comfortably distinct from any real distance this grid
-// could ever produce (width + height is nowhere close).
-export const UNREACHABLE_DISTANCE = 0x7fff;
 
 export type Nest = {
     chambers: Chamber[];
@@ -290,69 +290,4 @@ export function nearestChamberField(nest: Nest, role: ChamberRole, fromPos: Posi
     }
 
     return best ? nest.distanceFields[best.id] : undefined;
-}
-
-// Memoised single-target distance fields. `distanceField(grid, [tile])` is a
-// pure function of the grid (static for the whole run — no digging until
-// Phase 11) and the tile, so the result can be cached and reused. Undertakers
-// walking to a corpse and nurses walking to an egg / nursery tile
-// (ants/undertaking.ts's moveToNestPoint) call this every tick; without the
-// cache that's a fresh full-grid BFS + Int16Array allocation per ant per
-// tick, which is what made the Phase 6 nest expansion tank the tick rate.
-// Keyed by grid identity via a WeakMap, so a discarded ColonyState's fields
-// are collected with it (tests build many).
-const tileFieldCache = new WeakMap<Grid, Map<string, Int16Array>>();
-
-export function fieldToTile(grid: Grid, target: Position): Int16Array {
-    let byTarget = tileFieldCache.get(grid);
-    if (byTarget === undefined) {
-        byTarget = new Map();
-        tileFieldCache.set(grid, byTarget);
-    }
-    const key = `${target.x},${target.y}`;
-    let field = byTarget.get(key);
-    if (field === undefined) {
-        field = distanceField(grid, [target]);
-        byTarget.set(key, field);
-    }
-    return field;
-}
-
-// Multi-source BFS: every tile of `chamberTiles` seeds the queue at distance
-// 0 simultaneously (not one BFS per tile), so a multi-tile chamber measures
-// "distance to the nearest tile of this chamber," not distance to one
-// arbitrarily chosen tile within it. No RNG involved, but the neighbor
-// iteration order is still fixed (via passableNeighbors, which itself fixes
-// direction order — see grid.ts) — that's what makes the resulting field
-// byte-identical every run, not just "probably the same."
-export function distanceField(grid: Grid, chamberTiles: Position[]): Int16Array {
-    const field = new Int16Array(grid.width * grid.height).fill(UNREACHABLE_DISTANCE);
-    const queue: Position[] = [];
-
-    for (const tile of chamberTiles) {
-        const index = getIndex(grid, tile.x, tile.y);
-        if (field[index] === UNREACHABLE_DISTANCE) {
-            field[index] = 0;
-            queue.push(tile);
-        }
-    }
-
-    let head = 0;
-    while (head < queue.length) {
-        const current = queue[head];
-        head += 1;
-
-        const currentDistance = field[getIndex(grid, current.x, current.y)];
-
-        for (const neighbor of passableNeighbors(grid, current.x, current.y)) {
-            const neighborIndex = getIndex(grid, neighbor.x, neighbor.y);
-
-            if (field[neighborIndex] === UNREACHABLE_DISTANCE) {
-                field[neighborIndex] = currentDistance + 1;
-                queue.push(neighbor);
-            }
-        }
-    }
-
-    return field;
 }

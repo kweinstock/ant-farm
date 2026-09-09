@@ -69,7 +69,7 @@ describe("simulation determinism", () => {
     for (let i = 0; i < 3000; i++) small = step(small, 1).state;
 
     expect(big.state).toEqual(small);
-  }, 20000);
+  });
 
   // A forced hard winter puts the per-worker cold-death roll (index.ts's
   // worker loop) in play every tick, on top of weather + predator — the
@@ -85,5 +85,5 @@ describe("simulation determinism", () => {
     for (let i = 0; i < 1500; i++) small = step(small, 1).state;
 
     expect(big.state).toEqual(small);
-  }, 20000);
+  });
 });

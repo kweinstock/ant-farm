@@ -23,7 +23,7 @@ import type { Brood } from "../colony/brood";
 import type { Surface } from "../world/surface";
 import type { Corpse } from "../corpses";
 import { eatFromStore } from "../world/resources";
-import { pickUpFood, depositFood, surfaceStep, surfaceWander } from "./foraging";
+import { pickUpFood, depositFood, eatFromPile, surfaceStep, surfaceRoute, surfaceWander } from "./foraging";
 import { moveToNestPoint, pickUpCorpse, dropCorpse, clearUndertaking } from "./undertaking";
 import { MAX_ENERGY, NURSE_AGE_THRESHOLD_TICKS, NURSERY_TILE_CAPACITY } from "../params";
 
@@ -206,8 +206,14 @@ export function act(state: ColonyState, ant: Ant, action: Action): ActResult {
         case "depositFood":
             return depositFood(state, ant);
 
+        case "eatFromPile":
+            return eatFromPile(state, ant);
+
         case "surfaceStep":
             return surfaceStep(state, ant, action.target);
+
+        case "surfaceRoute":
+            return surfaceRoute(state, ant, action.target);
 
         case "surfaceWander":
             return surfaceWander(state, ant);

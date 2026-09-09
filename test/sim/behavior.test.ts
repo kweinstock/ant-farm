@@ -147,7 +147,7 @@ describe("decide — forager round trip (rule 4 -> decideForager)", () => {
     it("surface, carrying a load -> walk to the hole, then cross in", () => {
         const carrying = makeAnt({ carryingFood: 80, location: { where: "surface", pos: { x: 1, y: 1 } } });
         expect(decide(carrying, makePerception({ where: "surface", currentChamber: undefined }))).toEqual({
-            type: "surfaceStep",
+            type: "surfaceRoute",
             target: { x: 20, y: 27 },
         });
         expect(decide(carrying, makePerception({ where: "surface", currentChamber: undefined, atHole: true }))).toEqual({
@@ -159,7 +159,7 @@ describe("decide — forager round trip (rule 4 -> decideForager)", () => {
         const hungry = makeAnt({ location: { where: "surface", pos: { x: 1, y: 1 } } });
         expect(
             decide(hungry, makePerception({ where: "surface", currentChamber: undefined, hungerRatio: 0.2 }))
-        ).toEqual({ type: "surfaceStep", target: { x: 20, y: 27 } });
+        ).toEqual({ type: "surfaceRoute", target: { x: 20, y: 27 } });
         expect(
             decide(hungry, makePerception({ where: "surface", currentChamber: undefined, hungerRatio: 0.2, atHole: true }))
         ).toEqual({ type: "crossExit" });

@@ -55,5 +55,5 @@ describe("population dynamics", () => {
         // sure the run actually exercised her death, not just a lucky long
         // reign, so the post-queen path above is really being tested.
         expect(queenEverDied).toBe(true);
-    }, 20000);
+    });
 });

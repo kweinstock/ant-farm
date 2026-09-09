@@ -6,6 +6,7 @@
 // ground itself, then (PHASE 4) the trail layer, the graveyard, food
 // piles, corpses, the hole, and ants filtered to where === "surface".
 import { inGraveyard } from "../../sim/world/surface";
+import { tileAt, TILE } from "../../sim/world/grid";
 import { PILE_START_AMOUNT } from "../../sim/params";
 import type { ColonyState } from "../../sim/state";
 import type { Corpse } from "../../sim/corpses";
@@ -16,6 +17,11 @@ import { drawAnt, drawCorpse } from "./ants";
 import { renderTrail } from "./pheromone-layer";
 
 const GROUND_COLOR = "#c9b896";
+const PATCH_COLOR = "#7a9c4a";
+const ROCK_COLOR = "#7a7a72";
+const TREE_COLOR = "#3f6b35";
+const ROCK_RADIUS_RATIO = 0.32;
+const TREE_RADIUS_RATIO = 0.38;
 const HOLE_COLOR = "#1a1208";
 const HOLE_RADIUS_RATIO = 0.4;
 const GRAVEYARD_OUTLINE_COLOR = "rgba(0, 0, 0, 0.25)";
@@ -32,12 +38,42 @@ const PILE_MIN_SCALE = 0.25;
 const GRAVEYARD_SHADE_FULL_COUNT = 15;
 const GRAVEYARD_MAX_FILL_ALPHA = 0.5;
 
+function inAnyPatch(x: number, y: number, patches: { x0: number; y0: number; x1: number; y1: number }[]): boolean {
+    for (const patch of patches) {
+        if (x >= patch.x0 && x <= patch.x1 && y >= patch.y0  && y <= patch.y1) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 export function renderSurfaceView(ctx: CanvasRenderingContext2D, state: ColonyState, options: RenderOptions): void {
     const { surface } = state;
     const cellSize = SURFACE_CELL_SIZE;
 
-    ctx.fillStyle = GROUND_COLOR;
-    ctx.fillRect(0, 0, surface.grid.width * cellSize, surface.grid.height * cellSize);
+    for (let y = 0; y < surface.grid.height; y++) {
+        for (let x = 0; x < surface.grid.width; x++) {
+            const tile = tileAt(surface.grid, x, y);
+            const px = x * cellSize;
+            const py = y * cellSize;
+
+            ctx.fillStyle = inAnyPatch(x, y, surface.patches) ? PATCH_COLOR : GROUND_COLOR;
+            ctx.fillRect(px, py, cellSize, cellSize);
+
+            if (tile === TILE.ROCK) {
+                ctx.fillStyle = ROCK_COLOR;
+                ctx.beginPath();
+                ctx.arc(px + cellSize / 2, py + cellSize / 2, cellSize * ROCK_RADIUS_RATIO, 0, Math.PI * 2);
+                ctx.fill();
+            } else if (tile === TILE.TREE) {
+                ctx.fillStyle = TREE_COLOR;
+                ctx.beginPath();
+                ctx.arc(px + cellSize / 2, py + cellSize / 2, cellSize * TREE_RADIUS_RATIO, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+    }
 
     // Faint grid lines, same treatment as nest-view.ts, so both panes read
     // as one visual language.

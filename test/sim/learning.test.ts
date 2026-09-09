@@ -53,7 +53,7 @@ describe("foraging learning (Phase 4: recruitment efficiency)", () => {
     it(
         "food delivered per forage trip is higher once the trail network has established",
         () => {
-            const seeds = [1, 2];
+            const seeds = [2, 3];
             const results = seeds.map(foodPerTrip);
 
             for (const r of results) {

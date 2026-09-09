@@ -28,11 +28,13 @@ export type Action =
     | { type: "pickUpEgg" }
     | { type: "placeEgg" }
     | { type: "eat" }
+    | { type: "eatFromPile" }
     | { type: "mill" }
     | { type: "crossExit" }
     | { type: "pickUpFood" }
     | { type: "depositFood" }
     | { type: "surfaceStep"; target: Position }
+    | { type: "surfaceRoute"; target: Position }
     | { type: "surfaceWander" }
     | { type: "moveToNestPoint"; target: Position }
     | { type: "pickUpCorpse" }
@@ -48,7 +50,11 @@ export function decide(ant: Ant, perception: Perception): Action {
     // which has its own surface->home logic; an undertaking ant skips it too
     // (rule 3 owns it until the body is buried).
     if (perception.where === "surface" && ant.job !== "FORAGER" && !ant.undertaking) {
-        return perception.atHole ? { type: "crossExit" } : { type: "surfaceStep", target: perception.holePos };
+        // Routed, not greedy: this nurse just dropped a body at the (Phase 7)
+        // far-flung graveyard and has to cross the whole map back to the hole,
+        // obstacles and all. holePos is a fixed target so its field is already
+        // cached (every laden forager uses it).
+        return perception.atHole ? { type: "crossExit" } : { type: "surfaceRoute", target: perception.holePos };
     }
 
     // Rule 1: carrying an egg — walk it to a specific free nursery tile and
@@ -69,7 +75,18 @@ export function decide(ant: Ant, perception: Perception): Action {
     // nest-only now: a surface ant can't reach the nest's food store, so
     // being hungry there means something else entirely — decideForager's
     // own edge case (head for the hole) handles that instead.
-    if (perception.hungerRatio < HUNGER_THRESHOLD && perception.where === "nest") {
+    //
+    // A forager that walked home carrying food is the exception: it must
+    // reach FOOD_STORAGE and DEPOSIT before it eats. Sending it to "eat"
+    // first deadlocks a starving colony — every returning forager loops at
+    // an empty store trying to eat while still holding the 100 food that
+    // would refill it. Let decideForager route it to deposit; it eats next
+    // tick, once its own haul is in the store.
+    if (
+        perception.hungerRatio < HUNGER_THRESHOLD &&
+        perception.where === "nest" &&
+        !(ant.job === "FORAGER" && ant.carryingFood > 0)
+    ) {
         return perception.currentChamber === "FOOD_STORAGE" ? { type: "eat" } : { type: "goto", role: "FOOD_STORAGE" };
     }
 

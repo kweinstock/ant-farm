@@ -22,7 +22,7 @@ export const TICK_INTERVALS_MS = 100;
 // The surface (40x28) at CELL_SIZE would render nearly twice as wide as the
 // nest (24x16) — a separate, smaller cell size keeps the two views a
 // comparable on-screen size instead of the surface dwarfing the nest.
-export const SURFACE_CELL_SIZE = 6;
+export const SURFACE_CELL_SIZE = 11;
 
 // Which pane(s) ui/view-switch.ts shows a fresh visitor with no stored
 // preference yet. "split" for both side-by-side/stacked; "nest"/"surface"

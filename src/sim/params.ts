@@ -16,12 +16,8 @@
 // ---- Nest / surface dimensions (structural — changing these needs layout regen) ----
 export const GRID_WIDTH = 80;
 export const GRID_HEIGHT = 60;
-// Phase 6 scaled the nest up ~9x. The surface grows properly in Phase 7
-// (fertile patches + patch-biased search), so it's only bumped ~2.5x here —
-// enough to give the bigger colony room to forage without the round trip
-// outrunning the trail lifetime, which is what a full 120x84 did.
-export const SURFACE_WIDTH = 60;
-export const SURFACE_HEIGHT = 44;
+export const SURFACE_WIDTH = 100;
+export const SURFACE_HEIGHT = 72;
 
 // ---- Colony seed & food economy ----
 export const STARTER_WORKER_COUNT = 12;
@@ -31,13 +27,13 @@ export const FORAGER_LOAD = 100;
 export const EAT_AMOUNT = 50;
 
 // ---- Ant energy & lifespan ----
-export const STARTING_ENERGY = 1500;
-export const MAX_ENERGY = 1500;
+export const STARTING_ENERGY = 1000;
+export const MAX_ENERGY = 500;
 export const HUNGER_THRESHOLD = 0.5;
-export const MIN_LIFESPAN_TICKS = 500;
-export const MAX_LIFESPAN_TICKS = 1000;
-export const QUEEN_MIN_LIFESPAN_TICKS = 4000;
-export const QUEEN_MAX_LIFESPAN_TICKS = 7000;
+export const MIN_LIFESPAN_TICKS = 1000;
+export const MAX_LIFESPAN_TICKS = 3000;
+export const QUEEN_MIN_LIFESPAN_TICKS = 5000;
+export const QUEEN_MAX_LIFESPAN_TICKS = 8000;
 export const METABOLISM_COST = 1;
 
 // ---- Jobs, castes, movement, senses ----
@@ -69,12 +65,59 @@ export const DEPOSIT_AMOUNT = 40;
 // ---- Surface food piles ----
 // Scaled for the ~2.5x-bigger Phase 6 surface: more piles, spawning faster,
 // so a forager emerging from the hole has something within reach.
-export const MAX_PILES = 18;
+export const MAX_PILES = 24;
 export const PILE_START_AMOUNT = 250;
 export const PILE_SPAWN_CHANCE = 0.09;
 export const PILE_DECAY_TICKS = 400;
 export const HOLE_EXCLUSION_RADIUS = 6;
 export const MAX_SPAWN_ATTEMPTS = 20;
+
+// ---- Phase 7: fertile patches & surface obstacles ----
+// Fertile clearings — small forage-rich pockets scattered through the
+// forest, ringed around the centre hole and clear of the top-left graveyard
+// (see surface.ts). Hand-authored, fixed order, not generated. 8 of them,
+// 8x8, no overlap.
+export const FERTILE_PATCHES = [
+    { x0: 24, y0: 10, x1: 31, y1: 17 }, // NW
+    { x0: 46, y0: 8, x1: 53, y1: 15 },  // N
+    { x0: 68, y0: 10, x1: 75, y1: 17 }, // NE
+    { x0: 76, y0: 30, x1: 83, y1: 37 }, // E
+    { x0: 68, y0: 52, x1: 75, y1: 59 }, // SE
+    { x0: 46, y0: 54, x1: 53, y1: 61 }, // S
+    { x0: 24, y0: 52, x1: 31, y1: 59 }, // SW
+    { x0: 16, y0: 31, x1: 23, y1: 38 }, // W
+];
+
+// Probability a spawn attempt targets a patch rect rather than the open
+// forest floor. High — patches are the reliable food; the open map still
+// gets a trickle so a forager caught far from one isn't stranded.
+export const PATCH_SPAWN_BIAS = 0.9;
+
+// Pile size multipliers on top of PILE_START_AMOUNT (and forageAbundance) —
+// patch piles are the rich find, open-ground piles the consolation prize.
+export const PATCH_PILE_SIZE_FACTOR = 1.3;
+export const OPEN_PILE_START_FACTOR = 0.4;
+
+// ---- Forest floor (surface obstacles) ----
+// createSurface walks every tile and rolls FOREST_SEED_BASE against a per-
+// tile hash to decide "cover here?". The base is nudged by up to
+// +/-FOREST_SEED_VARIATION by a two-octave value noise (CLUMP for the gentle
+// regional ebb, DETAIL for local texture) — a narrow band, so the forest is
+// evenly scattered with no map-spanning clearings or thickets. A seed
+// becomes a 2x2 TREE canopy; where the 2x2 won't fit (map edge / hole radius
+// / graveyard / an obstacle already there) or ROCK_FRACTION of the time
+// instead, it's a single ROCK. Inside a fertile patch the seed chance is
+// scaled by PATCH_CLEARING_FACTOR (patches read as clearings). createSurface
+// then runs a connectivity repair that carves the minimum cover needed so
+// every GROUND tile stays reachable from the hole (ecology.test.ts asserts
+// this), and clears any canopy fragment the repair leaves behind — a tree
+// is a full 2x2 or it's ground.
+export const FOREST_CLUMP_SCALE = 10;
+export const FOREST_DETAIL_SCALE = 2.5;
+export const FOREST_SEED_BASE = 0.05;
+export const FOREST_SEED_VARIATION = 0.03;
+export const PATCH_CLEARING_FACTOR = 0.25;
+export const ROCK_FRACTION = 0.3;
 
 // ---- Corpses & undertaking ----
 export const UNDERTAKER_PER_CORPSE = 0.5;

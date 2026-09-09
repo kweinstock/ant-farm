@@ -23,10 +23,12 @@ describe("pheromone trails in the running sim", () => {
             ant.location = { where: "nest", pos: exitMouth(state.nest) };
         }
 
-        // One rich pile a short walk from the hole (hole is bottom-centre of
-        // a 40x28 surface).
+        // One rich pile a short walk straight "up" from the hole. y-5 keeps it
+        // inside HOLE_EXCLUSION_RADIUS (6), so it's guaranteed GROUND — no
+        // Phase 7 forest obstacle can land on it, and the corridor between is
+        // clear.
         const hole = state.surface.holePos;
-        const pilePos = { x: hole.x, y: hole.y - 6 };
+        const pilePos = { x: hole.x, y: hole.y - 5 };
         const pile: FoodPile = { id: "pile-t", pos: pilePos, amount: 5000, ageTicks: 0 };
         state.surface.foodPiles.push(pile);
 

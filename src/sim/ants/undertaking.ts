@@ -32,18 +32,27 @@ export function decideUndertaker(perception: Perception): Action {
         if (perception.where === "nest") {
             return perception.atExitMouth ? { type: "crossExit" } : { type: "goto", role: "EXIT" };
         }
-        // graveyardPos is this ant's assigned slot (senses.ts:graveyardSlot),
-        // not the graveyard centre — walk all the way onto it, then set the
-        // body down exactly there so the pile spreads across tiles.
-        return perception.atGraveyardSlot
-            ? { type: "dropCorpse" }
-            : { type: "surfaceStep", target: perception.graveyardPos };
+
+        if (perception.inGraveyard) {
+            return perception.atGraveyardSlot
+                ? { type: "dropCorpse" }
+                : { type: "surfaceStep", target: perception.graveyardPos };
+        }
+        return { type: "surfaceRoute", target: perception.graveyardCentre };
     }
 
     if (perception.onAssignedCorpse) {
         return { type: "pickUpCorpse" };
     }
 
+    // Walking OUT to a loose corpse: greedy step, not a routed field. The
+    // corpse's tile is an arbitrary death spot (a new cached BFS per distinct
+    // position), and assignment is proximity-weighted so the undertaker is
+    // usually close already — the odd obstacle in the way is handled by
+    // stepToward's sidestep. The two paths that actually cross the map with
+    // obstacles in them — hauling a body to the graveyard, and a laden
+    // forager going home — use surfaceRoute with a FIXED target, so their
+    // fields are computed once and reused.
     return perception.where === "nest"
         ? { type: "moveToNestPoint", target: perception.assignedCorpse.pos }
         : { type: "surfaceStep", target: perception.assignedCorpse.pos };

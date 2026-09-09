@@ -34,7 +34,7 @@ describe("weather", () => {
         expect(a).toEqual(b);
         // Guard against a frozen chain making the equality vacuous.
         expect(a.length).toBeGreaterThan(3);
-    }, 20000);
+    });
 
     it("transition sequence is identical one big step vs many small steps", () => {
         const seed = 55555;
@@ -58,7 +58,7 @@ describe("weather", () => {
         // The big step doesn't carry per-event simTime, so compare the
         // from->to chain and the count.
         expect(bigLog).toEqual(smallLog.map((s) => s.split(":")[1]));
-    }, 20000);
+    });
 
     it("respects seasonal gating: no SNOW in a forced summer, no HEAT in a forced winter", () => {
         let summer = createInitialState(1, { season: "SUMMER" });
@@ -77,5 +77,5 @@ describe("weather", () => {
         // Winter should actually reach snow at some point — confirms the
         // gating check above isn't passing just because weather never moved.
         expect(sawSnow).toBe(true);
-    }, 20000);
+    });
 });

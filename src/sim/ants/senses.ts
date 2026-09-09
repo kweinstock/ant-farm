@@ -7,7 +7,7 @@
 
 import type { Ant } from "./ant";
 import { chamberAt, chamberIdAt, exitMouth, type ChamberId, type ChamberRole } from "../world/nest";
-import { nearestPile, inGraveyard, graveyardSlot, type FoodPileId } from "../world/surface";
+import { nearestPile, inGraveyard as surfaceInGraveyard, graveyardSlot, type FoodPileId } from "../world/surface";
 import { manhattanDistance, type Position } from "../world/grid";
 import type { ColonyState } from "../state";
 import type { BroodId } from "../colony/brood";
@@ -20,11 +20,6 @@ export type Perception = {
     where: "nest" | "surface";
     currentChamber: ChamberRole | undefined;
     currentChamberId: ChamberId | undefined;
-    // The exact tile a NURSE should walk to for its current brood task —
-    // the tile an uncarried egg is sitting on (to fetch), or the nearest
-    // nursery tile with a free slot (to place). Undefined when there's no
-    // egg waiting / nowhere with room. behavior.ts routes the ant tile-by-
-    // tile to these rather than "close enough, anywhere in the room".
     queenEggPos: Position | undefined;
     nurseryPlacementPos: Position | undefined;
     atExitMouth: boolean;
@@ -34,6 +29,9 @@ export type Perception = {
     nearestFoodPilePos: Position | undefined;
     trailNeighbor: Position | undefined;
     rememberedFoodPos: Position | undefined;
+    nearestPatchTarget: Position | undefined;
+    inGraveyard: boolean;
+    graveyardCentre: Position;
     carrying: BroodId[];
     hungerRatio: number;
     eggsAvailableInQueenChamber: boolean;
@@ -137,6 +135,46 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
         ? bestRememberedSite(ant.memory, state.simTime)
         : undefined;
 
+    let nearestPatchTarget: Position | undefined;
+    if (where === "surface") {
+        const patches = state.surface.patches;
+        const centroidOf = (p: { x0: number; y0: number; x1: number; y1: number }): Position => ({
+            x: Math.floor((p.x0 + p.x1) / 2),
+            y: Math.floor((p.y0 + p.y1) / 2),
+        });
+
+        let currentPatchIndex = -1;
+        for (let i = 0; i < patches.length; i++) {
+            const p = patches[i];
+            if (pos.x >= p.x0 && pos.x <= p.x1 && pos.y >= p.y0 && pos.y <= p.y1) {
+                currentPatchIndex = i;
+                break;
+            }
+        }
+
+        if (currentPatchIndex >= 0) {
+            // Standing in a patch, and decideForager only consults this after
+            // the visible-pile / trail / memory checks have all missed — so
+            // this patch is barren right now. Don't mill here waiting for a
+            // spawn that may never come; move on to the next patch around the
+            // ring. A fixed successor (i+1), not "nearest other patch":
+            // nearest-other deterministically ping-pongs between two adjacent
+            // patches forever, whereas a one-way ring sweeps all of them and
+            // eventually finds the piles.
+            nearestPatchTarget = centroidOf(patches[(currentPatchIndex + 1) % patches.length]);
+        } else {
+            let bestDist = Infinity;
+            for (const p of patches) {
+                const centroid = centroidOf(p);
+                const d = manhattanDistance(pos, centroid);
+                if (d < bestDist) {
+                    bestDist = d;
+                    nearestPatchTarget = centroid;
+                }
+            }
+        }
+    }
+
     // "Available" means: still an EGG, physically still sitting in the
     // QUEEN chamber, and not already claimed by a nurse. Nest-only in
     // practice (a forager never reads this) but computed unconditionally,
@@ -161,7 +199,7 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
     const assignedCorpseBuried =
         assignedCorpseEntry !== undefined &&
         assignedCorpseEntry.location.where === "surface" &&
-        inGraveyard(state.surface, assignedCorpseEntry.location.pos);
+        surfaceInGraveyard(state.surface, assignedCorpseEntry.location.pos);
 
     const carryingCorpse = state.corpses.some((corpse) => corpse.carriedBy === ant.id);
     const onAssignedCorpse = assignedCorpse !== undefined && assignedCorpse.where === where && assignedCorpse.pos.x === pos.x && assignedCorpse.pos.y === pos.y;
@@ -169,6 +207,12 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
     // tiles) to compute unconditionally, like holePos.
     const graveyardPos = graveyardSlot(state.surface, state.corpses, pos);
     const atGraveyardSlot = where === "surface" && pos.x === graveyardPos.x && pos.y === graveyardPos.y;
+    const inGraveyard = where === "surface" && surfaceInGraveyard(state.surface, pos);
+
+    const graveyardCentre: Position = {
+        x: Math.floor((state.surface.graveyard.x0 + state.surface.graveyard.x1) / 2),
+        y: Math.floor((state.surface.graveyard.y0 + state.surface.graveyard.y1) / 2),
+    };
 
     return {
         where,
@@ -183,6 +227,7 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
         nearestFoodPilePos,
         trailNeighbor,
         rememberedFoodPos,
+        nearestPatchTarget,
         carrying: ant.carrying,
         hungerRatio: ant.energy / MAX_ENERGY,
         eggsAvailableInQueenChamber,
@@ -192,5 +237,7 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
         onAssignedCorpse,
         graveyardPos,
         atGraveyardSlot,
+        inGraveyard,
+        graveyardCentre,
     };
 }
