@@ -88,9 +88,9 @@ export const DEPOSIT_AMOUNT = 70;
 // the capacity, and the whole map at most MAX_PILES * FOOD_TILE_CAPACITY.
 // (No patch-vs-open size split any more — patches stay the richer find only
 // because PATCH_SPAWN_BIAS aims more spawns at them.)
-export const MAX_PILES = 24;
-export const FOOD_PILE_START_AMOUNT = 150;
-export const FOOD_TILE_CAPACITY = 400;
+export const MAX_PILES = 64;
+export const FOOD_PILE_START_AMOUNT = 300;
+export const FOOD_TILE_CAPACITY = 500;
 export const PILE_SPAWN_CHANCE = 0.1;
 export const PILE_DECAY_TICKS = 400;
 export const HOLE_EXCLUSION_RADIUS = 6;
