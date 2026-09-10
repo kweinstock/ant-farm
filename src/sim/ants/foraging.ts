@@ -31,7 +31,7 @@ import { wander, stepToward, surfaceRouteStep } from "./movement";
 import { takeFromPile } from "../world/surface";
 import { depositToStore } from "../world/resources";
 import { deposit } from "../pheromones";
-import { rememberFoodSite } from "./memory";
+import { rememberFoodSite, rememberEmptyPatch } from "./memory";
 import { HUNGER_THRESHOLD, DEPOSIT_AMOUNT, FORAGER_LOAD, EAT_AMOUNT, MAX_ENERGY } from "../params";
 import type { ColonyState } from "../state";
 import type { Position } from "../world/grid";
@@ -40,6 +40,17 @@ import type { ActResult } from "./jobs";
 export function decideForager(ant: Ant, perception: Perception): Action {
     if (perception.where === "nest") {
         if (ant.carryingFood > 0) {
+            if (perception.queenHungry) {
+                if (perception.currentChamber !== "QUEEN") {
+                    return { type: "goto", role: "QUEEN"};
+                }
+
+                const q = perception.queenPos;
+                return ant.location.pos.x === q.x && ant.location.pos.y === q.y
+                    ? { type: "feedQueen" }
+                    : { type: "moveToNestPoint", target: q };
+            }
+
             return perception.currentChamber === "FOOD_STORAGE" ? { type: "depositFood" } : { type: "goto", role: "FOOD_STORAGE" };
         }
         return perception.atExitMouth ? { type: "crossExit" } : { type: "goto", role: "EXIT" };
@@ -90,7 +101,17 @@ export function decideForager(ant: Ant, perception: Perception): Action {
     }
 
     if (perception.nearestPatchTarget !== undefined) {
-        return {type: "surfaceRoute", target: perception.nearestPatchTarget};
+        // Standing in a patch that turned out to be dry: bank that ("patch i
+        // is empty") so this ant explores elsewhere for a while, and head for
+        // the next patch in the same step.
+        if (perception.barrenPatchIndex !== undefined) {
+            return {
+                type: "noteBarrenPatch",
+                target: perception.nearestPatchTarget,
+                patchIndex: perception.barrenPatchIndex,
+            };
+        }
+        return { type: "surfaceRoute", target: perception.nearestPatchTarget };
     }
 
     return { type: "surfaceWander" };
@@ -181,6 +202,11 @@ export function surfaceStep(state: ColonyState, ant: Ant, target: Position): Act
 export function surfaceRoute(state: ColonyState, ant: Ant, target: Position): ActResult {
     const result = surfaceRouteStep(state.surface.grid, ant.location.pos, target, state.rngSeed);
     return applySurfaceMove(state, ant, result);
+}
+
+export function noteBarrenPatch(state: ColonyState, ant: Ant, target: Position, patchIndex: number): ActResult {
+    const remembered: Ant = { ...ant, memory: rememberEmptyPatch(ant.memory, patchIndex, state.simTime) };
+    return surfaceRoute(state, remembered, target);
 }
 
 export function surfaceWander(state: ColonyState, ant: Ant): ActResult {

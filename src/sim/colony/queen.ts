@@ -14,10 +14,12 @@
 import { rng } from "../rng";
 import { ageAndMeter } from "../ants/lifecycle";
 import type { Ant } from "../ants/ant";
+import type { AntLocation } from "../ants/ant";
 import type { ColonyState } from "../state";
 import { layEgg, type Brood } from "./brood";
-import { allTilesOf } from "../world/nest";
-import { BASE_LAY_PROBABILITY, NURSERY_TILE_CAPACITY, POPULATION_SOFT_TARGET } from "../params";
+import { allTilesOf, chamberIdAt } from "../world/nest";
+import { getNeighbors, isPassable, manhattanDistance, type Position } from "../world/grid";
+import { BASE_LAY_PROBABILITY, NURSERY_TILE_CAPACITY, POPULATION_SOFT_TARGET, QUEEN_STEP_INTERVAL_TICKS } from "../params";
 import { layFactor } from "../environment/season";
 
 export type QueenTickResult = {
@@ -27,28 +29,65 @@ export type QueenTickResult = {
     rngSeed: number;
 };
 
+function queenStep(state: ColonyState, chamberId: string, pos: Position, target: Position): Position {
+    if (pos.x === target.x && pos.y === target.y) {
+        return pos;
+    }
+
+    const neighbors = getNeighbors(state.grid, pos.x, pos.y).filter(
+        (n) => isPassable(state.grid, n.x, n.y) && chamberIdAt(state.nest, n) === chamberId
+    );
+
+    if (neighbors.length === 0) {
+        return pos;
+    }
+
+    let best = neighbors[0];
+    let bestDist = manhattanDistance(best, target);
+    for (let i = 1; i < neighbors.length; i++) {
+        const d = manhattanDistance(neighbors[i], target);
+        if (d < bestDist) {
+            bestDist = d;
+            best = neighbors[i];
+        }
+    }
+    return best;
+}
+
 export function tickQueen(state: ColonyState): QueenTickResult {
     const queenBeforeTick = state.ants.get(state.queenId);
 
-    // index.ts guards this call with `state.ants.has(state.queenId)`, so a
-    // missing queen here means that invariant was broken somewhere. Fail loud
-    // instead of returning a fake `undefined as Ant` that crashes later with
-    // no hint where it came from.
     if (!queenBeforeTick) {
         throw new Error(
             `tickQueen called with no queen ${state.queenId} in state.ants — caller must guard`
         );
     }
 
-    const {ant: queen, isDead} = ageAndMeter(queenBeforeTick);
+    const metered = ageAndMeter(queenBeforeTick);
+    let queen = metered.ant;
 
-    if (isDead) {
+    if (metered.isDead) {
         return {
             brood: state.brood,
             queen,
             isDead: true,
             rngSeed: state.rngSeed,
         };
+    }
+
+    if (state.simTime % QUEEN_STEP_INTERVAL_TICKS === 0) {
+        const chamberId = chamberIdAt(state.nest, queen.location.pos);
+        const chamber = state.nest.chambers.find((c) => c.id === chamberId);
+
+        if (chamber && chamber.tiles.length > 0) {
+            const PATROL_TICKS = QUEEN_STEP_INTERVAL_TICKS * 20;
+            const targetIndex = Math.floor(state.simTime / PATROL_TICKS) % chamber.tiles.length;
+            const target = chamber.tiles[targetIndex];
+
+            const newPos = queenStep(state, chamber.id, queen.location.pos, target);
+            const location: AntLocation = { where: "nest", pos: newPos };
+            queen = { ...queen, location };
+        }
     }
 
     const population = Math.max(state.ants.size, 1);

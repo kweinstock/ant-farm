@@ -1,5 +1,7 @@
-// Executes a decided Action. goto/mill move the ant; pickUpEgg/placeEgg/eat
-// do the room's actual work. The carried-egg source of truth is the Brood
+// Executes a decided Action. goto/mill/eat/crossExit are handled inline here;
+// the job-specific handlers live with their decide logic (nursing.ts:
+// pickUpEgg/placeEgg/tendBrood, foraging.ts, undertaking.ts) and are just
+// dispatched from the switch. The carried-egg source of truth is the Brood
 // entry itself (its own `carriedBy` and `position`), not a duplicated
 // position on the Ant — Ant.carrying is just "which broodIds am I holding,"
 // a marker for behavior.ts/senses.ts to read, never a second copy of where
@@ -17,18 +19,20 @@
 import type { Ant, AntLocation, Job } from "./ant";
 import type { Action } from "./behavior";
 import { wander, moveToward } from "./movement";
-import { chamberAt, exitMouth, nearestChamberField } from "../world/nest";
+import { exitMouth, nearestChamberField } from "../world/nest";
 import type { ColonyState } from "../state";
 import type { Brood } from "../colony/brood";
 import type { Surface } from "../world/surface";
 import type { Corpse } from "../corpses";
 import { eatFromStore } from "../world/resources";
-import { pickUpFood, depositFood, eatFromPile, surfaceStep, surfaceRoute, surfaceWander } from "./foraging";
+import { pickUpFood, depositFood, eatFromPile, surfaceStep, surfaceRoute, surfaceWander, noteBarrenPatch } from "./foraging";
 import { moveToNestPoint, pickUpCorpse, dropCorpse, clearUndertaking } from "./undertaking";
-import { MAX_ENERGY, NURSE_AGE_THRESHOLD_TICKS, NURSERY_TILE_CAPACITY } from "../params";
+import { pickUpEgg, placeEgg, tendBrood } from "./nursing";
+import { MAX_ENERGY, NURSE_AGE_THRESHOLD_TICKS } from "../params";
 
 export type ActResult = {
     ant: Ant;
+    queen?: Ant;
     brood: Brood[];
     foodStore: { amount: number; capacity: number };
     surface: Surface;
@@ -41,18 +45,6 @@ function syncCarriedCorpse(corpses: Corpse[], antId: string, newLocation: AntLoc
         return corpses;
     }
     return corpses.map((corpse) => (corpse.carriedBy === antId ? { ...corpse, location: newLocation } : corpse));
-}
-
-// Count of uncarried brood physically sitting on `pos` — the per-tile
-// nursery cap is checked against this.
-function broodOnTile(state: ColonyState, pos: { x: number; y: number }): number {
-    let n = 0;
-    for (const entry of state.brood) {
-        if (entry.carriedBy === undefined && entry.position.x === pos.x && entry.position.y === pos.y) {
-            n += 1;
-        }
-    }
-    return n;
 }
 
 export function act(state: ColonyState, ant: Ant, action: Action): ActResult {
@@ -110,66 +102,11 @@ export function act(state: ColonyState, ant: Ant, action: Action): ActResult {
             };
         }
 
-        case "pickUpEgg": {
-            // The nurse walked onto the egg's tile (behavior.ts rule 4) —
-            // pick up an egg that's actually there, not one anywhere in the
-            // chamber.
-            const here = ant.location.pos;
-            const egg = state.brood.find(
-                (entry) =>
-                    entry.stage === "EGG" &&
-                    entry.carriedBy === undefined &&
-                    entry.position.x === here.x &&
-                    entry.position.y === here.y &&
-                    chamberAt(state.nest, entry.position) === "QUEEN"
-            );
+        case "pickUpEgg":
+            return pickUpEgg(state, ant);
 
-            if (!egg) {
-                return { ant, brood: state.brood, foodStore: state.foodStore, surface: state.surface, corpses: state.corpses, rngSeed: state.rngSeed };
-            }
-
-            const brood = state.brood.map((entry) =>
-                entry.id === egg.id ? { ...entry, carriedBy: ant.id } : entry
-            );
-
-            return {
-                ant: { ...ant, carrying: [...ant.carrying, egg.id] },
-                brood,
-                foodStore: state.foodStore,
-                surface: state.surface,
-                corpses: state.corpses,
-                rngSeed: state.rngSeed,
-            };
-        }
-
-        case "placeEgg": {
-            if (ant.carrying.length === 0) {
-                return { ant, brood: state.brood, foodStore: state.foodStore, surface: state.surface, corpses: state.corpses, rngSeed: state.rngSeed };
-            }
-
-            const eggId = ant.carrying[0];
-            const here = ant.location.pos;
-
-            // The nurse walked onto a specific free nursery tile
-            // (behavior.ts rule 1 -> perception.nurseryPlacementPos). Set the
-            // egg down here only if this really is a NURSERY tile with room.
-            if (chamberAt(state.nest, here) !== "NURSERY" || broodOnTile(state, here) >= NURSERY_TILE_CAPACITY) {
-                return { ant, brood: state.brood, foodStore: state.foodStore, surface: state.surface, corpses: state.corpses, rngSeed: state.rngSeed };
-            }
-
-            const brood = state.brood.map((entry) =>
-                entry.id === eggId ? { ...entry, position: { x: here.x, y: here.y }, carriedBy: undefined } : entry
-            );
-
-            return {
-                ant: { ...ant, carrying: ant.carrying.filter((id) => id !== eggId) },
-                brood,
-                foodStore: state.foodStore,
-                surface: state.surface,
-                corpses: state.corpses,
-                rngSeed: state.rngSeed,
-            };
-        }
+        case "placeEgg":
+            return placeEgg(state, ant);
 
         case "eat": {
             const { store, consumed } = eatFromStore(state.foodStore);
@@ -183,6 +120,29 @@ export function act(state: ColonyState, ant: Ant, action: Action): ActResult {
                 rngSeed: state.rngSeed,
             };
         }
+
+        case "feedQueen": {
+            const queen = state.ants.get(state.queenId);
+            if (!queen || ant.carryingFood <= 0) {
+                return { ant, brood: state.brood, foodStore: state.foodStore, surface: state.surface, corpses: state.corpses, rngSeed: state.rngSeed };
+            }
+
+            const deficit = MAX_ENERGY - queen.energy;
+            const transfer = Math.min(ant.carryingFood, Math.max(deficit, 0));
+
+            return {
+                ant: { ...ant, carryingFood: ant.carryingFood - transfer },
+                queen: { ...queen, energy: queen.energy + transfer },
+                brood: state.brood,
+                foodStore: state.foodStore,
+                surface: state.surface,
+                corpses: state.corpses,
+                rngSeed: state.rngSeed,
+            };
+        }
+
+        case "tendBrood":
+            return tendBrood(state, ant);
 
         case "crossExit": {
             const location: AntLocation =
@@ -214,6 +174,9 @@ export function act(state: ColonyState, ant: Ant, action: Action): ActResult {
 
         case "surfaceRoute":
             return surfaceRoute(state, ant, action.target);
+
+        case "noteBarrenPatch":
+            return noteBarrenPatch(state, ant, action.target, action.patchIndex);
 
         case "surfaceWander":
             return surfaceWander(state, ant);

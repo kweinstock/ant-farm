@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createInitialState } from "../../src/sim/state";
-import { STARTING_FOOD_STORE } from "../../src/sim/params";
+import { STARTING_FOOD_STORE, MAX_ENERGY } from "../../src/sim/params";
 import { step } from "../../src/sim";
 import { exitMouth } from "../../src/sim/world/nest";
 import type { FoodPile } from "../../src/sim/world/surface";
@@ -11,13 +11,14 @@ describe("nest <-> surface transition", () => {
         const state = createInitialState(12345);
 
         // Turn one starter worker into a forager standing at the exit mouth,
-        // full energy so it isn't diverted by hunger. (createInitialState
-        // seeds everyone as NURSE; they'd flip to FORAGER at age 150, but
-        // this makes the test fast and independent of that timing.)
+        // full energy so it isn't diverted by hunger. Age it well past the
+        // others so the colony job allocator (colony/workforce.ts, nurses are
+        // drawn youngest-first) always leaves this one foraging.
         const forager = [...state.ants.values()].find((a) => a.caste === "WORKER");
         if (!forager) throw new Error("expected a starter worker");
         forager.job = "FORAGER";
-        forager.energy = 1500;
+        forager.energy = MAX_ENERGY;
+        forager.ageTicks = 400;
         forager.location = { where: "nest", pos: exitMouth(state.nest) };
         const foragerId = forager.id;
 
@@ -28,6 +29,7 @@ describe("nest <-> surface transition", () => {
             id: "pile-999",
             pos: { x: state.surface.holePos.x, y: state.surface.holePos.y - 4 },
             amount: 300,
+            capacity: 300,
             ageTicks: 0,
         };
         state.surface.foodPiles.push(pile);

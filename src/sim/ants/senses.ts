@@ -13,8 +13,8 @@ import type { ColonyState } from "../state";
 import type { BroodId } from "../colony/brood";
 import { corpseById } from "../corpses";
 import { strongestPassableNeighbor } from "../pheromones";
-import { bestRememberedSite } from "./memory";
-import { MAX_ENERGY, NURSERY_TILE_CAPACITY, SIGHT_RADIUS } from "../params";
+import { bestRememberedSite, patchKnownEmpty } from "./memory";
+import { MAX_ENERGY, NURSERY_TILE_CAPACITY, SIGHT_RADIUS, QUEEN_HUNGER_RATIO, TEND_INTERVAL_TICKS, TEND_STALL_TICKS } from "../params";
 
 export type Perception = {
     where: "nest" | "surface";
@@ -22,6 +22,11 @@ export type Perception = {
     currentChamberId: ChamberId | undefined;
     queenEggPos: Position | undefined;
     nurseryPlacementPos: Position | undefined;
+    broodNeedingTendPos: Position | undefined;
+    broodUrgentTendPos: Position | undefined;
+    eggsWaitingCount: number;
+    queenHungry: boolean;
+    queenPos: Position;
     atExitMouth: boolean;
     atHole: boolean;
     holePos: Position;
@@ -30,6 +35,7 @@ export type Perception = {
     trailNeighbor: Position | undefined;
     rememberedFoodPos: Position | undefined;
     nearestPatchTarget: Position | undefined;
+    barrenPatchIndex: number | undefined;
     inGraveyard: boolean;
     graveyardCentre: Position;
     carrying: BroodId[];
@@ -99,6 +105,38 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
         }
     }
 
+    // Placed brood that wants tending. `broodNeedingTendPos` is the nearest
+    // one merely due (past TEND_INTERVAL) — a nurse handles it once idle.
+    // `broodUrgentTendPos` is the nearest one genuinely close to dying (past
+    // TEND_STALL, so it's stopped developing and TEND_DEATH is approaching) —
+    // decideNurse tends that one even mid-ferry, so a ferry backlog can't
+    // wipe the nursery.
+    let broodNeedingTendPos: Position | undefined;
+    let broodUrgentTendPos: Position | undefined;
+    if (where === "nest") {
+        let best = Infinity;
+        let bestUrgent = Infinity;
+        for (const brood of state.brood) {
+            if (brood.carriedBy !== undefined) continue;
+            if (chamberAt(state.nest, brood.position) !== "NURSERY") continue;
+            const overdueBy = state.simTime - brood.lastTendedTick;
+            if (overdueBy < TEND_INTERVAL_TICKS) continue;
+            const d = manhattanDistance(brood.position, pos);
+            if (d < best) {
+                best = d;
+                broodNeedingTendPos = brood.position;
+            }
+            if (overdueBy >= TEND_STALL_TICKS && d < bestUrgent) {
+                bestUrgent = d;
+                broodUrgentTendPos = brood.position;
+            }
+        }
+    }
+
+    const queen = state.ants.get(state.queenId);
+    const queenHungry = queen !== undefined && queen.energy / MAX_ENERGY < QUEEN_HUNGER_RATIO;
+    const queenPos: Position = queen !== undefined ? queen.location.pos : pos;
+
     const mouth = where === "nest" ? exitMouth(state.nest) : undefined;
     const atExitMouth = mouth !== undefined && pos.x === mouth.x && pos.y === mouth.y;
 
@@ -131,17 +169,33 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
     const trailNeighbor = where === "surface"
         ? strongestPassableNeighbor(state.surface.trail, state.surface.grid, pos.x, pos.y, state.surface.holePos)
         : undefined;
+    const pileAt = (p: Position): boolean =>
+        state.surface.foodPiles.some((pile) => pile.amount > 0 && pile.pos.x === p.x && pile.pos.y === p.y);
     const rememberedFoodPos = where === "surface"
-        ? bestRememberedSite(ant.memory, state.simTime)
+        ? bestRememberedSite(ant.memory, state.simTime, pileAt)
         : undefined;
 
+    // Patch routing. `barrenPatchIndex` is set when the ant is standing in a
+    // patch that has no pile anywhere in it right now — decideForager turns
+    // that into "record this patch empty and move on". `nearestPatchTarget`
+    // is the patch to explore next: the nearest one this ant doesn't already
+    // remember as empty (so foragers fan out across the ring instead of all
+    // re-checking the same dry patch), skipping the one it's standing in.
     let nearestPatchTarget: Position | undefined;
+    let barrenPatchIndex: number | undefined;
     if (where === "surface") {
         const patches = state.surface.patches;
         const centroidOf = (p: { x0: number; y0: number; x1: number; y1: number }): Position => ({
             x: Math.floor((p.x0 + p.x1) / 2),
             y: Math.floor((p.y0 + p.y1) / 2),
         });
+        const patchHasPile = (p: { x0: number; y0: number; x1: number; y1: number }): boolean =>
+            state.surface.foodPiles.some(
+                (pile) =>
+                    pile.amount > 0 &&
+                    pile.pos.x >= p.x0 && pile.pos.x <= p.x1 &&
+                    pile.pos.y >= p.y0 && pile.pos.y <= p.y1,
+            );
 
         let currentPatchIndex = -1;
         for (let i = 0; i < patches.length; i++) {
@@ -152,27 +206,35 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
             }
         }
 
-        if (currentPatchIndex >= 0) {
-            // Standing in a patch, and decideForager only consults this after
-            // the visible-pile / trail / memory checks have all missed — so
-            // this patch is barren right now. Don't mill here waiting for a
-            // spawn that may never come; move on to the next patch around the
-            // ring. A fixed successor (i+1), not "nearest other patch":
-            // nearest-other deterministically ping-pongs between two adjacent
-            // patches forever, whereas a one-way ring sweeps all of them and
-            // eventually finds the piles.
-            nearestPatchTarget = centroidOf(patches[(currentPatchIndex + 1) % patches.length]);
-        } else {
-            let bestDist = Infinity;
-            for (const p of patches) {
-                const centroid = centroidOf(p);
-                const d = manhattanDistance(pos, centroid);
-                if (d < bestDist) {
-                    bestDist = d;
-                    nearestPatchTarget = centroid;
-                }
+        // Standing in a patch, close enough to see the whole 8x8, and there's
+        // no pile in it — that's a first-hand "this one's dry" observation.
+        if (currentPatchIndex >= 0 && !patchHasPile(patches[currentPatchIndex])) {
+            barrenPatchIndex = currentPatchIndex;
+        }
+
+        // Explore the nearest patch this ant hasn't just written off as
+        // empty, skipping the one it's standing in. `fallback` (plain
+        // nearest) covers the case where every other patch is
+        // remembered-empty — better to re-check a stale one than freeze.
+        let bestDist = Infinity;
+        let fallbackDist = Infinity;
+        let fallback: Position | undefined;
+        for (let i = 0; i < patches.length; i++) {
+            if (i === currentPatchIndex) continue;
+            const centroid = centroidOf(patches[i]);
+            const d = manhattanDistance(pos, centroid);
+
+            if (d < fallbackDist) {
+                fallbackDist = d;
+                fallback = centroid;
+            }
+            if (patchKnownEmpty(ant.memory, i, state.simTime)) continue;
+            if (d < bestDist) {
+                bestDist = d;
+                nearestPatchTarget = centroid;
             }
         }
+        if (nearestPatchTarget === undefined) nearestPatchTarget = fallback;
     }
 
     // "Available" means: still an EGG, physically still sitting in the
@@ -180,12 +242,17 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
     // practice (a forager never reads this) but computed unconditionally,
     // same as before this phase — cheap enough that gating it behind
     // `where` would just be an extra branch for no real savings.
-    const eggsAvailableInQueenChamber = state.brood.some(
-        (brood) =>
+    let eggsWaitingCount = 0;
+    for (const brood of state.brood) {
+        if (
             brood.stage === "EGG" &&
-            chamberAt(state.nest, brood.position) === "QUEEN" &&
-            brood.carriedBy === undefined
-    );
+            brood.carriedBy === undefined &&
+            chamberAt(state.nest, brood.position) === "QUEEN"
+        ) {
+            eggsWaitingCount += 1;
+        }
+    }
+    const eggsAvailableInQueenChamber = eggsWaitingCount > 0;
 
     const assignedCorpseEntry = ant.undertaking !== undefined ? corpseById(state, ant.undertaking.corpseId) : undefined;
 
@@ -220,6 +287,11 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
         currentChamberId,
         queenEggPos,
         nurseryPlacementPos,
+        broodNeedingTendPos,
+        broodUrgentTendPos,
+        eggsWaitingCount,
+        queenHungry,
+        queenPos,
         atExitMouth,
         atHole,
         holePos,
@@ -228,6 +300,7 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
         trailNeighbor,
         rememberedFoodPos,
         nearestPatchTarget,
+        barrenPatchIndex,
         carrying: ant.carrying,
         hungerRatio: ant.energy / MAX_ENERGY,
         eggsAvailableInQueenChamber,

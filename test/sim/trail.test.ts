@@ -29,7 +29,7 @@ describe("pheromone trails in the running sim", () => {
         // clear.
         const hole = state.surface.holePos;
         const pilePos = { x: hole.x, y: hole.y - 5 };
-        const pile: FoodPile = { id: "pile-t", pos: pilePos, amount: 5000, ageTicks: 0 };
+        const pile: FoodPile = { id: "pile-t", pos: pilePos, amount: 5000, capacity: 5000, ageTicks: 0 };
         state.surface.foodPiles.push(pile);
 
         // 200 ticks: long enough for a trail network to build up, short

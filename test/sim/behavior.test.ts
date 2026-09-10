@@ -64,7 +64,7 @@ describe("decide — nest rules", () => {
         ).toEqual({ type: "placeEgg" });
     });
 
-    it("carrying an egg beats hunger (rule 1 before rule 2)", () => {
+    it("carrying an egg beats hunger — a laden nurse delivers before it eats", () => {
         const ant = makeAnt({ job: "NURSE", carrying: ["brood-1"], location: { where: "nest", pos: { x: 30, y: 30 } } });
         expect(
             decide(ant, makePerception({
@@ -105,7 +105,7 @@ describe("decide — nest rules", () => {
     });
 });
 
-describe("decide — forager round trip (rule 4 -> decideForager)", () => {
+describe("decide — forager round trip (handoff to decideForager)", () => {
     it("nest, no load, not at the mouth -> walk to the exit", () => {
         expect(decide(makeAnt(), makePerception())).toEqual({ type: "goto", role: "EXIT" });
     });
@@ -116,7 +116,7 @@ describe("decide — forager round trip (rule 4 -> decideForager)", () => {
         });
     });
 
-    it("a forager ignores waiting eggs (rule 4 catches it before rule 5)", () => {
+    it("a forager ignores waiting eggs — the job handoff sends it to decideForager, not the nurse rules", () => {
         expect(
             decide(makeAnt({ job: "FORAGER" }), makePerception({ eggsAvailableInQueenChamber: true, currentChamber: "QUEEN" }))
         ).toEqual({ type: "goto", role: "EXIT" });

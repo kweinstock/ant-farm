@@ -21,19 +21,19 @@ export const SURFACE_HEIGHT = 72;
 
 // ---- Colony seed & food economy ----
 export const STARTER_WORKER_COUNT = 12;
-export const STARTING_FOOD_STORE = 200;
-export const FOOD_STORE_CAP = 500;
+export const STARTING_FOOD_STORE = 5000;
+export const FOOD_STORE_CAP = 15000;
 export const FORAGER_LOAD = 100;
 export const EAT_AMOUNT = 50;
 
 // ---- Ant energy & lifespan ----
-export const STARTING_ENERGY = 1000;
-export const MAX_ENERGY = 500;
+export const STARTING_ENERGY = 2500;
+export const MAX_ENERGY = 3000;
 export const HUNGER_THRESHOLD = 0.5;
 export const MIN_LIFESPAN_TICKS = 1000;
 export const MAX_LIFESPAN_TICKS = 3000;
-export const QUEEN_MIN_LIFESPAN_TICKS = 5000;
-export const QUEEN_MAX_LIFESPAN_TICKS = 8000;
+export const QUEEN_MIN_LIFESPAN_TICKS = 6000;
+export const QUEEN_MAX_LIFESPAN_TICKS = 9000;
 export const METABOLISM_COST = 1;
 
 // ---- Jobs, castes, movement, senses ----
@@ -43,31 +43,55 @@ export const NURSE_EGG_CAPACITY = 3;
 export const SIGHT_RADIUS = 11;
 export const NOISE_PROBABILITY = 0.2;
 
+// Colony-level nurse allocation (colony/workforce.ts). Nurse count follows
+// the brood, not age: one nurse per NURSE_BROOD_PER_NURSE brood, drawn
+// oldest-first from the workforce, and never more nurses than foragers
+// (capped at half the workers). assignJob still sets a worker's job for the
+// one tick between eclosion and the next allocation pass.
+export const NURSE_BROOD_PER_NURSE = 6;
+
 // ---- Queen & brood ----
 export const BASE_LAY_PROBABILITY = 0.3;
 export const POPULATION_SOFT_TARGET = 30;
 export const EGG_DURATION_TICKS = 30;
 export const LARVA_DURATION_TICKS = 60;
 export const PUPA_DURATION_TICKS = 50;
+export const QUEEN_METABOLISM_COST = 0.25;
+export const QUEEN_HUNGER_RATIO = 0.5;
+export const QUEEN_STEP_INTERVAL_TICKS = 60;
+export const TEND_INTERVAL_TICKS = 40;
+export const TEND_STALL_TICKS = 60;
+export const TEND_DEATH_TICKS = 150;
 
 // ---- Foraging memory ----
-export const MAX_REMEMBERED = 3;
+export const MAX_REMEMBERED = 4;
 export const MEMORY_TTL_TICKS = 300;
+// A forager that reaches a patch and finds it bare records the patch as
+// empty for this long, so it tries a *different* patch next trip instead of
+// walking back to the same dry one. Shorter than MEMORY_TTL_TICKS — a patch
+// refills faster than a specific pile stays put.
+export const EMPTY_PATCH_TTL_TICKS = 200;
+export const MAX_EMPTY_PATCHES_REMEMBERED = 8;
 
 // ---- Pheromones ----
-export const MAX_TRAIL = 200;
+export const MAX_TRAIL = 500;
 export const EVAPORATION_FACTOR = 0.95;
 export const MIN_TRAIL = 1;
 export const SPREAD_FRAC = 0.3;
 export const FOLLOW_THRESHOLD = 5;
-export const DEPOSIT_AMOUNT = 40;
+export const DEPOSIT_AMOUNT = 70;
 
 // ---- Surface food piles ----
-// Scaled for the ~2.5x-bigger Phase 6 surface: more piles, spawning faster,
-// so a forager emerging from the hole has something within reach.
+// Two knobs size the food on a tile: a fresh pile spawns holding
+// FOOD_PILE_START_AMOUNT, and repeated spawns onto a tile that already has a
+// pile top it up — never past FOOD_TILE_CAPACITY. So one tile holds at most
+// the capacity, and the whole map at most MAX_PILES * FOOD_TILE_CAPACITY.
+// (No patch-vs-open size split any more — patches stay the richer find only
+// because PATCH_SPAWN_BIAS aims more spawns at them.)
 export const MAX_PILES = 24;
-export const PILE_START_AMOUNT = 250;
-export const PILE_SPAWN_CHANCE = 0.09;
+export const FOOD_PILE_START_AMOUNT = 150;
+export const FOOD_TILE_CAPACITY = 400;
+export const PILE_SPAWN_CHANCE = 0.1;
 export const PILE_DECAY_TICKS = 400;
 export const HOLE_EXCLUSION_RADIUS = 6;
 export const MAX_SPAWN_ATTEMPTS = 20;
@@ -91,12 +115,7 @@ export const FERTILE_PATCHES = [
 // Probability a spawn attempt targets a patch rect rather than the open
 // forest floor. High — patches are the reliable food; the open map still
 // gets a trickle so a forager caught far from one isn't stranded.
-export const PATCH_SPAWN_BIAS = 0.9;
-
-// Pile size multipliers on top of PILE_START_AMOUNT (and forageAbundance) —
-// patch piles are the rich find, open-ground piles the consolation prize.
-export const PATCH_PILE_SIZE_FACTOR = 1.3;
-export const OPEN_PILE_START_FACTOR = 0.4;
+export const PATCH_SPAWN_BIAS = 0.8;
 
 // ---- Forest floor (surface obstacles) ----
 // createSurface walks every tile and rolls FOREST_SEED_BASE against a per-

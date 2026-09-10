@@ -1,27 +1,27 @@
-// Per-ant food memory (decision 5, Phase 4). Deliberately narrower than this
-// file's original stub suggested: no pathStats (route success/failure
-// counters), no dangerSpots, no quality field, and no heritable learning
-// rate — those all implied more machinery than this phase wants. Phase 4's
-// learning is individual-within-a-lifetime only: a worker remembers a
-// handful of tiles that had food, forgets them after a while, and that's
-// it. "Over generations" needs genetics (Phase 9) to make anything
-// heritable; test/sim/learning.test.ts measures the collective (trail
-// network, pheromones.ts) + individual (this file) effect within one run,
-// not a generational trend.
+// Per-ant food memory (decision 5, Phase 4; extended Phase 7 review).
 //
-// Implicit-success-only, per decision 5: a site is remembered exactly when
-// pickUpFood actually finds a pile there (ants/foraging.ts calls
-// rememberFoodSite from inside that handler) — there's no separate
-// "route worked" signal to track, so nothing here needs a counter.
+// Two lists, both short-lived and individual-within-a-lifetime — no
+// heritable learning, no route counters (that needs genetics, Phase 9):
+//
+//   foodSites   — tiles where this ant actually picked food up. It heads
+//                 back to the freshest one, but senses.ts only offers it a
+//                 site that STILL has a pile, so a drained spot drops out of
+//                 routing on its own.
+//   emptyPatches — patches this ant walked into and found bare. For
+//                 EMPTY_PATCH_TTL_TICKS it won't pick that patch again as a
+//                 fresh exploration target, so a colony spreads across the
+//                 ring instead of every forager piling onto whichever patch
+//                 it happened to find first.
 import type { Position } from "../world/grid";
-import { MAX_REMEMBERED, MEMORY_TTL_TICKS } from "../params";
+import { MAX_REMEMBERED, MEMORY_TTL_TICKS, EMPTY_PATCH_TTL_TICKS, MAX_EMPTY_PATCHES_REMEMBERED } from "../params";
 
 export type AntMemory = {
     foodSites: { pos: Position; tick: number }[];
+    emptyPatches: { patchIndex: number; tick: number }[];
 };
 
 export function emptyMemory(): AntMemory {
-    return { foodSites: [] };
+    return { foodSites: [], emptyPatches: [] };
 }
 
 export function rememberFoodSite(memory: AntMemory, pos: Position, tick: number): AntMemory {
@@ -31,14 +31,32 @@ export function rememberFoodSite(memory: AntMemory, pos: Position, tick: number)
     return { ...memory, foodSites };
 }
 
+export function rememberEmptyPatch(memory: AntMemory, patchIndex: number, tick: number): AntMemory {
+    const deduped = memory.emptyPatches.filter((e) => e.patchIndex !== patchIndex);
+    const emptyPatches = [{ patchIndex, tick }, ...deduped].slice(0, MAX_EMPTY_PATCHES_REMEMBERED);
 
-export function bestRememberedSite(memory: AntMemory, nowTick: number): Position | undefined {
+    return { ...memory, emptyPatches };
+}
+
+export function patchKnownEmpty(memory: AntMemory, patchIndex: number, nowTick: number): boolean {
+    return memory.emptyPatches.some(
+        (e) => e.patchIndex === patchIndex && nowTick - e.tick < EMPTY_PATCH_TTL_TICKS,
+    );
+}
+
+// Freshest un-expired remembered food site for which `stillHasFood` is true —
+// the caller (senses.ts) checks the live pile list, so a site that's been
+// drained since the ant last saw it is simply skipped.
+export function bestRememberedSite(
+    memory: AntMemory,
+    nowTick: number,
+    stillHasFood: (pos: Position) => boolean,
+): Position | undefined {
     let best: { pos: Position; tick: number } | undefined;
 
     for (const site of memory.foodSites) {
-        if (nowTick - site.tick >= MEMORY_TTL_TICKS) {
-            continue;
-        }
+        if (nowTick - site.tick >= MEMORY_TTL_TICKS) continue;
+        if (!stillHasFood(site.pos)) continue;
         if (best === undefined || site.tick > best.tick) {
             best = site;
         }

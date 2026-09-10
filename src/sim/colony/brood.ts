@@ -11,7 +11,7 @@ import { createWorker } from "../ants/ant";
 import type { ColonyState } from "../state";
 import { chamberAt } from "../world/nest";
 import type { Position } from "../world/grid";
-import { EGG_DURATION_TICKS, LARVA_DURATION_TICKS, PUPA_DURATION_TICKS } from "../params";
+import { EGG_DURATION_TICKS, LARVA_DURATION_TICKS, PUPA_DURATION_TICKS, TEND_STALL_TICKS, TEND_DEATH_TICKS } from "../params";
 import { broodSpeed } from "../environment/season";
 
 
@@ -24,6 +24,13 @@ export type Brood = {
     progressTicks: number;
     position: Position;
     carriedBy?: AntId;
+    lastTendedTick: number;
+}
+
+export type BroodLostEvent = {
+    kind: "broodLost";
+    broodId: BroodId;
+    stage: BroodStage;
 }
 
 export function layEgg(state: ColonyState): Brood {
@@ -38,12 +45,19 @@ export function layEgg(state: ColonyState): Brood {
         progressTicks: 0,
         position,
         carriedBy: undefined,
+        lastTendedTick: state.simTime,
     };
 }
 
-export function advanceBrood(state: ColonyState): {brood: Brood[]; newAdults: Ant[]; rngSeed: number} {
+export function advanceBrood(state: ColonyState): {
+    brood: Brood[];
+    newAdults: Ant[];
+    rngSeed: number;
+    events: BroodLostEvent[];
+} {
     const newAdults: Ant[] = [];
     const remainingBrood: Brood[] = [];
+    const events: BroodLostEvent[] = [];
 
     let nextAntId = state.nextAntId;
     let rngSeed = state.rngSeed;
@@ -57,13 +71,24 @@ export function advanceBrood(state: ColonyState): {brood: Brood[]; newAdults: An
         const isPlaced = entry.carriedBy === undefined && chamberAt(state.nest, entry.position) === "NURSERY";
 
         if (!isPlaced) {
-            // Still sitting uncarried in the QUEEN chamber, or currently
-            // being walked somewhere by a nurse — either way, no progress
-            // this tick. This is the actual bottleneck this phase is built
-            // around: physical placement unlocks development, not time
-            // alone.
             remainingBrood.push(entry);
             continue; 
+        }
+
+        const ticksSinceTended = state.simTime - entry.lastTendedTick;
+
+        if (ticksSinceTended >= TEND_DEATH_TICKS) {
+            // Neglected past the death threshold — lost. Not pushed to
+            // remainingBrood, same as an eclosion: its nursery tile frees up.
+            events.push({ kind: "broodLost", broodId: entry.id, stage: entry.stage });
+            continue;
+        }
+
+        if (ticksSinceTended >= TEND_STALL_TICKS) {
+            // Overdue for tending — stalled. Holds its place and stage but
+            // makes no developmental progress this tick.
+            remainingBrood.push(entry);
+            continue;
         }
 
         if (entry.stage === "EGG") {
@@ -110,5 +135,6 @@ export function advanceBrood(state: ColonyState): {brood: Brood[]; newAdults: An
         brood: remainingBrood,
         newAdults,
         rngSeed,
+        events,
     };
 }

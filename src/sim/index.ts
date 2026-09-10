@@ -71,7 +71,8 @@ import { perceive } from "./ants/senses";
 import { decide } from "./ants/behavior";
 import { act } from "./ants/jobs";
 import { tickQueen } from "./colony/queen";
-import { advanceBrood } from "./colony/brood";
+import { advanceBrood, type BroodLostEvent } from "./colony/brood";
+import { reassignJobs } from "./colony/workforce";
 import { spawnFoodPiles, ageFoodPiles } from "./world/surface";
 import { createCorpse, ageCorpses, assignUndertakers } from "./corpses";
 import { evaporate } from "./pheromones";
@@ -132,7 +133,8 @@ export type SimEvent =
     | WeatherChangedEvent
     | PredatorAppearedEvent
     | PredatorLeftEvent
-    | PredatorStrikeEvent;
+    | PredatorStrikeEvent
+    | BroodLostEvent;
 
 type TickResult = {
     state: ColonyState;
@@ -249,6 +251,10 @@ function singleTick(state: ColonyState): TickResult {
         const nextAnts = new Map(currentState.ants);
         nextAnts.set(metered.id, actResult.ant);
 
+        if (actResult.queen !== undefined && currentState.ants.has(currentState.queenId)) {
+            nextAnts.set(currentState.queenId, actResult.queen);
+        }
+
         currentState = {
             ...currentState,
             ants: nextAnts,
@@ -297,6 +303,7 @@ function singleTick(state: ColonyState): TickResult {
     }
 
     const broodResult = advanceBrood(currentState);
+    events.push(...broodResult.events);
 
     const nextAntsAfterBrood = new Map(currentState.ants);
     for (const newAdult of broodResult.newAdults) {
@@ -311,6 +318,11 @@ function singleTick(state: ColonyState): TickResult {
         nextAntId: currentState.nextAntId + broodResult.newAdults.length,
         rngSeed: broodResult.rngSeed,
     };
+
+    // Colony job allocation: keep enough nurses on the placed brood, drawn
+    // youngest-first from the nest-side workers. Runs after births so this
+    // tick's new adults are counted.
+    currentState = { ...currentState, ants: reassignJobs(currentState) };
 
     const spawnResult = spawnFoodPiles(currentState.surface, currentState.rngSeed, currentState.env.season);
     const surfaceAfterSpawn = ageFoodPiles(spawnResult.surface);

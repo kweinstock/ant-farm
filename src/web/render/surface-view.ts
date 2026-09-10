@@ -7,7 +7,6 @@
 // piles, corpses, the hole, and ants filtered to where === "surface".
 import { inGraveyard } from "../../sim/world/surface";
 import { tileAt, TILE } from "../../sim/world/grid";
-import { PILE_START_AMOUNT } from "../../sim/params";
 import type { ColonyState } from "../../sim/state";
 import type { Corpse } from "../../sim/corpses";
 import type { AntId } from "../../sim/ants/ant";
@@ -128,12 +127,11 @@ export function renderSurfaceView(ctx: CanvasRenderingContext2D, state: ColonySt
     ctx.lineWidth = 2;
     ctx.strokeRect(gyX, gyY, gyWidth, gyHeight);
 
-    // Food piles: radius/opacity scale with amount against PILE_START_AMOUNT
-    // — same shrink-as-depleted treatment Phase 3's fixed piles used, just
-    // normalized against a starting max instead of a per-pile capacity
-    // (surface piles have none, see world/surface.ts).
+    // Food piles: radius/opacity scale with how full the tile is against its
+    // own capacity — same shrink-as-depleted treatment Phase 3's fixed piles
+    // used.
     for (const pile of surface.foodPiles) {
-        const fullness = Math.min(1, pile.amount / PILE_START_AMOUNT);
+        const fullness = pile.capacity > 0 ? Math.min(1, pile.amount / pile.capacity) : 0;
         if (fullness <= 0) {
             continue;
         }

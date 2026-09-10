@@ -17,18 +17,20 @@
 import { createGrid, getIndex, getNeighbors, isInBounds, manhattanDistance, passableNeighbors, setTile, tileAt, TILE, type Grid, type Position } from "./grid";
 import { randomInt } from "../rng";
 import { createTrailField, type TrailField } from "../pheromones";
-import { FERTILE_PATCHES, FOREST_CLUMP_SCALE, FOREST_DETAIL_SCALE, FOREST_SEED_BASE, FOREST_SEED_VARIATION, HOLE_EXCLUSION_RADIUS, MAX_PILES, MAX_SPAWN_ATTEMPTS, OPEN_PILE_START_FACTOR, PATCH_CLEARING_FACTOR, PATCH_PILE_SIZE_FACTOR, PATCH_SPAWN_BIAS, PILE_DECAY_TICKS, PILE_SPAWN_CHANCE, PILE_START_AMOUNT, ROCK_FRACTION } from "../params";
+import { FERTILE_PATCHES, FOOD_PILE_START_AMOUNT, FOOD_TILE_CAPACITY, FOREST_CLUMP_SCALE, FOREST_DETAIL_SCALE, FOREST_SEED_BASE, FOREST_SEED_VARIATION, HOLE_EXCLUSION_RADIUS, MAX_PILES, MAX_SPAWN_ATTEMPTS, PATCH_CLEARING_FACTOR, PATCH_SPAWN_BIAS, PILE_DECAY_TICKS, PILE_SPAWN_CHANCE, ROCK_FRACTION } from "../params";
 import { forageAbundance, type Season } from "../environment/season";
 
 export type FoodPileId = string;
 
-// No `capacity`, no regrow — unlike the nest's foodStore, a surface pile is
-// a one-time, depleting resource. Once takeFromPile/ageFoodPiles drives
-// `amount` to 0 it's gone for good; a new pile is a new id, not a refill.
+// `capacity` is the per-tile ceiling (FOOD_TILE_CAPACITY): takeFromPile only
+// ever drains `amount`, but spawnFoodPiles tops a pile back up on a repeat
+// spawn, never past `capacity`. Still no self-regrow — a pile at 0 that
+// nothing re-seeds decays out via ageFoodPiles.
 export type FoodPile = {
     id: FoodPileId;
     pos: Position;
     amount: number;
+    capacity: number;
     ageTicks: number;
 };
 
@@ -328,9 +330,14 @@ export function spawnFoodPiles(surface: Surface, rngSeed: number, season: Season
 
     const shouldTrySpawn = chanceRoll.value / 1_000_000 < PILE_SPAWN_CHANCE * forageAbundance(season);
 
-    if (!shouldTrySpawn || surface.foodPiles.length >= MAX_PILES) {
+    if (!shouldTrySpawn) {
         return { surface, seed };
     }
+    // The MAX_PILES cap is on *new* tiles — a spawn that lands on a tile that
+    // already has a pile tops it up instead (checked in the loop), and that
+    // stays allowed at the cap so the tiles foragers actually visit keep
+    // getting restocked.
+    const atCap = surface.foodPiles.length >= MAX_PILES;
 
     // Roll 2: patch vs. open. Roll 3: which patch — rolled unconditionally
     // even when the open branch wins, purely so the RNG cadence for a
@@ -382,12 +389,36 @@ export function spawnFoodPiles(surface: Surface, rngSeed: number, season: Season
             continue;
         }
 
-        const sizeFactor = useOpen ? OPEN_PILE_START_FACTOR : PATCH_PILE_SIZE_FACTOR;
+        const existing = surface.foodPiles.find(
+            (p) => p.pos.x === candidate.x && p.pos.y === candidate.y,
+        );
+
+        if (existing !== undefined) {
+            if (existing.amount >= FOOD_TILE_CAPACITY) {
+                // This tile is already maxed — treat it like any other reject
+                // and try somewhere else.
+                continue;
+            }
+            const foodPiles = surface.foodPiles.map((p) =>
+                p.id === existing.id
+                    ? { ...p, amount: Math.min(p.amount + FOOD_PILE_START_AMOUNT, FOOD_TILE_CAPACITY), ageTicks: 0 }
+                    : p,
+            );
+            return { surface: { ...surface, foodPiles }, seed };
+        }
+
+        if (atCap) {
+            // No pile here and the map is full of distinct piles — can't add a
+            // new tile. Keep sampling; another candidate might land on an
+            // existing pile that still has headroom.
+            continue;
+        }
 
         const pile: FoodPile = {
             id: `pile-${surface.nextPileId}`,
             pos: candidate,
-            amount: Math.round(PILE_START_AMOUNT * sizeFactor * forageAbundance(season)),
+            amount: Math.min(FOOD_PILE_START_AMOUNT, FOOD_TILE_CAPACITY),
+            capacity: FOOD_TILE_CAPACITY,
             ageTicks: 0,
         };
 
