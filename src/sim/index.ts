@@ -181,12 +181,25 @@ function singleTick(state: ColonyState): TickResult {
         .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
     for (const worker of workers) {
-        const {ant: metered, isDead: agedDead, cause: meterCause} = ageAndMeter(worker);
+        const {ant: aged, isDead: agedDead, cause: meterCause} = ageAndMeter(worker);
 
         if (agedDead) {
-            currentState = killWorker(currentState, metered, meterCause ?? "oldAge", events);
+            currentState = killWorker(currentState, aged, meterCause ?? "oldAge", events);
             continue;
         }
+
+        let metered = aged;
+        if (metered.asleep) {
+            if (currentState.simTime >= metered.wakeAt) {
+                metered = {...metered, asleep: false, ticksAwake: 0};
+            } else {
+                const nextAnts = new Map(currentState.ants);
+                nextAnts.set(metered.id, metered);
+                currentState = {...currentState, ants: nextAnts};
+                continue;
+            }
+        }
+
 
         const perception = perceive(currentState, metered);
         const action = decide(metered, perception);

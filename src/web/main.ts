@@ -28,6 +28,7 @@ import { step } from "../sim";
 import type { ColonyState } from "../sim/state";
 import type { AntId } from "../sim/ants/ant";
 import type { SimEvent, DeathEvent } from "../sim";
+import { getDemography } from "../sim/colony/demography";
 import { SOURCE, TICK_INTERVALS_MS } from "./config";
 import { startRenderLoop } from "./render/engine";
 import { mountViews } from "./ui/view-switch";
@@ -62,6 +63,9 @@ export type TuningStats = {
     recentTripLengths: number[];
     predatorStrikesTotal: number;
     lastFoodAmount: number;
+    asleepNow: number;
+    asleepFraction: number;
+    peakAsAsleepFraction: number;
 };
 
 const POP_HISTORY_WINDOW = 2000;
@@ -70,6 +74,9 @@ const DEATH_RATE_WINDOW = 1000;
 const MAX_TRIP_SAMPLES = 200;
 
 function createTuningStats(initial: ColonyState): TuningStats {
+    const initialAsleep = getDemography(initial).asleep
+    const initialFraction = initial.ants.size > 0 ? initialAsleep / initial.ants.size : 0;
+
     return {
         populationHistory: [{ tick: initial.simTime, population: initial.ants.size }],
         foodHistory: [{ tick: initial.simTime, amount: initial.foodStore.amount }],
@@ -84,6 +91,9 @@ function createTuningStats(initial: ColonyState): TuningStats {
         recentTripLengths: [],
         predatorStrikesTotal: 0,
         lastFoodAmount: initial.foodStore.amount,
+        asleepNow: initialAsleep,
+        asleepFraction: initialFraction,
+        peakAsAsleepFraction: initialFraction,
     };
 }
 
@@ -152,6 +162,10 @@ function updateTuningStats(stats: TuningStats, nextState: ColonyState, events: S
     while (stats.deathTicks.length > 0 && stats.deathTicks[0] < deathCutoff) {
         stats.deathTicks.shift();
     }
+
+    stats.asleepNow = getDemography(nextState).asleep;
+    stats.asleepFraction = nextState.ants.size > 0 ? stats.asleepNow / nextState.ants.size : 0;
+    stats.peakAsAsleepFraction = Math.max(stats.peakAsAsleepFraction, stats.asleepFraction);
 }
 
 const stats = createTuningStats(state);

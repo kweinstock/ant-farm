@@ -11,14 +11,25 @@ describe("nest <-> surface transition", () => {
         const state = createInitialState(12345);
 
         // Turn one starter worker into a forager standing at the exit mouth,
-        // full energy so it isn't diverted by hunger. Age it well past the
-        // others so the colony job allocator (colony/workforce.ts, nurses are
-        // drawn youngest-first) always leaves this one foraging.
-        const forager = [...state.ants.values()].find((a) => a.caste === "WORKER");
+        // full energy so it isn't diverted by hunger. colony/workforce.ts
+        // picks nurses OLDEST-first (capped at half the workforce), so to
+        // keep the job allocator from reclaiming this one the instant a
+        // nurse is needed, age every OTHER starter worker up instead —
+        // that leaves our ant the strict youngest, and therefore never a
+        // nurse candidate, regardless of how early the queen's first egg
+        // lands (Phase 9 shifted that timing: every ant now consumes one
+        // extra RNG draw at creation for its sleep phase, so the queen's
+        // first lay roll — and thus brood.length, and thus the nurse
+        // target — no longer lines up with a pre-Phase-9 seed run).
+        const workers = [...state.ants.values()].filter((a) => a.caste === "WORKER");
+        const forager = workers[0];
         if (!forager) throw new Error("expected a starter worker");
+        for (const other of workers.slice(1)) {
+            other.ageTicks = 1_000_000;
+        }
         forager.job = "FORAGER";
         forager.energy = MAX_ENERGY;
-        forager.ageTicks = 400;
+        forager.ageTicks = 0;
         forager.location = { where: "nest", pos: exitMouth(state.nest) };
         const foragerId = forager.id;
 

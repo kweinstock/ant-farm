@@ -13,7 +13,7 @@
 // can be called and reasoned about without threading rngSeed through it —
 // only index.ts, which already owns rngSeed for the tick, needs to know
 // about that second way to die.
-import { METABOLISM_COST, QUEEN_METABOLISM_COST, NURSE_AGE_THRESHOLD_TICKS } from "../params";
+import { METABOLISM_COST, QUEEN_METABOLISM_COST, NURSE_AGE_THRESHOLD_TICKS, SLEEP_METABOLISM_MULT } from "../params";
 import type { Ant } from "./ant";
 import { assignJob } from "./jobs";
 
@@ -33,7 +33,12 @@ export function ageAndMeter(ant: Ant): { ant: Ant; isDead: boolean; cause: Meter
     // feedQueen action). Underfed, she now starves; otherwise she still
     // reaches old age first (QUEEN_*_LIFESPAN_TICKS), which the colony has no
     // answer for until colony/caste.ts raises a replacement.
-    const energy = ant.energy - (ant.caste === "QUEEN" ? QUEEN_METABOLISM_COST : METABOLISM_COST);
+    //
+    // Phase 9: a sleeping ant's cost is scaled by SLEEP_METABOLISM_MULT
+    // (queen included, off her own QUEEN_METABOLISM_COST) — this function
+    // stays RNG-free, it just reads the asleep flag jobs.ts/queen.ts set.
+    const baseCost = ant.caste === "QUEEN" ? QUEEN_METABOLISM_COST : METABOLISM_COST
+    const energy = ant.energy - (ant.asleep ? baseCost * SLEEP_METABOLISM_MULT : baseCost);
 
     // Starvation is checked first: an ant that has run its energy to zero is
     // dead of starvation even if it also happens to be at its lifespan.
@@ -43,8 +48,10 @@ export function ageAndMeter(ant: Ant): { ant: Ant; isDead: boolean; cause: Meter
 
     const job = ant.caste === "WORKER" && crossedThreshold ? assignJob({...ant, ageTicks}) : ant.job
 
+    const ticksAwake = ant.asleep ? ant.ticksAwake : ant.ticksAwake + 1;
+
     return {
-        ant: {...ant, ageTicks, energy, job},
+        ant: {...ant, ageTicks, energy, job, ticksAwake},
         isDead: cause !== undefined,
         cause,
     };

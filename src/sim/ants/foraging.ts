@@ -27,6 +27,7 @@
 import type { Ant, AntLocation } from "./ant";
 import type { Perception } from "./senses";
 import type { Action } from "./behavior";
+import { isSleepy } from "./behavior";
 import { wander, stepToward, surfaceRouteStep } from "./movement";
 import { takeFromPile } from "../world/surface";
 import { depositToStore } from "../world/resources";
@@ -73,7 +74,7 @@ export function decideForager(ant: Ant, perception: Perception): Action {
         }
     }
 
-    const goHome = ant.carryingFood > 0 || hungry;
+    const goHome = ant.carryingFood > 0 || hungry || isSleepy(ant);
     if (goHome) {
         // Routed, not greedy. A laden forager leaves a patch (obstacles
         // clustered right there) and crosses the map to the hole — greedy

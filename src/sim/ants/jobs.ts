@@ -28,7 +28,7 @@ import { eatFromStore } from "../world/resources";
 import { pickUpFood, depositFood, eatFromPile, surfaceStep, surfaceRoute, surfaceWander, noteBarrenPatch } from "./foraging";
 import { moveToNestPoint, pickUpCorpse, dropCorpse, clearUndertaking } from "./undertaking";
 import { pickUpEgg, placeEgg, tendBrood } from "./nursing";
-import { MAX_ENERGY, NURSE_AGE_THRESHOLD_TICKS } from "../params";
+import { MAX_ENERGY, NURSE_AGE_THRESHOLD_TICKS, SLEEP_CYCLE_TICKS, SLEEP_DURATION_TICKS, SLEEP_DEBT_MAX } from "../params";
 
 export type ActResult = {
     ant: Ant;
@@ -192,6 +192,25 @@ export function act(state: ColonyState, ant: Ant, action: Action): ActResult {
 
         case "clearUndertaking":
             return clearUndertaking(state, ant);
+
+        case "sleep": {
+            const overshoot = Math.max(0, ant.ticksAwake - SLEEP_CYCLE_TICKS);
+            const sleepDebt = Math.min(overshoot, SLEEP_DEBT_MAX);
+
+            return {
+                ant: {
+                    ...ant,
+                    asleep: true,
+                    wakeAt: state.simTime + SLEEP_DURATION_TICKS + sleepDebt,
+                    ticksAwake: 0,
+                },
+                brood: state.brood,
+                foodStore: state.foodStore,
+                surface: state.surface,
+                corpses: state.corpses,
+                rngSeed: state.rngSeed,
+            };
+        }
     }
 }
 

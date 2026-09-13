@@ -13,10 +13,14 @@ describe("nursery / egg carrying", () => {
         let sawPlacedEgg = false;
         let births = 0;
 
-        // 400 ticks: long enough for a full egg -> larva -> pupa -> adult
+        // 800 ticks: long enough for a full egg -> larva -> pupa -> adult
         // pipeline (30 + 60 + 50 = 140 tick minimum once placed) plus the
-        // ferry time to get the first egg into the nursery.
-        for (let t = 0; t < 400; t++) {
+        // ferry time to get the first egg into the nursery, plus slack for
+        // Phase 9 sleep — nurses (and the queen) are asleep and unable to
+        // ferry/tend/lay roughly 1 tick in 4, and a nurse due for a nap
+        // detours to a commons first, so real elapsed ticks per pipeline
+        // stage run noticeably longer than the bare minimum above.
+        for (let t = 0; t < 800; t++) {
             const result = step(state, 1);
             state = result.state;
             births += result.events.filter((e) => e.kind === "birth").length;

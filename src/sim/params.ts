@@ -250,3 +250,14 @@ export const SEASON_BROOD_SPEED: Record<Season, number> = {
 export const RAIN_EVAPORATION_FACTOR = 0.85; // replaces EVAPORATION_FACTOR while raining
 export const WIND_EXPOSURE_MULT = 1.5;
 export const RAIN_EXPOSURE_MULT = 1.3;
+
+// ---- Phase 9: Sleep ----
+export const SLEEPS_PER_DAY = 250;
+export const SLEEP_DURATION_TICKS = 1;
+export const SLEEP_CYCLE_TICKS = DAY_LENGTH_TICKS / SLEEPS_PER_DAY;
+
+export const QUEEN_SLEEP_MULT = 4;
+
+export const SLEEP_METABOLISM_MULT = 0;
+
+export const SLEEP_DEBT_MAX = 20;

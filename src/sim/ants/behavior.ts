@@ -10,7 +10,7 @@ import type { Position } from "../world/grid";
 import { decideForager } from "./foraging";
 import { decideUndertaker } from "./undertaking";
 import { decideNurse } from "./nursing";
-import { HUNGER_THRESHOLD } from "../params";
+import { HUNGER_THRESHOLD, SLEEP_CYCLE_TICKS, SLEEP_DURATION_TICKS } from "../params";
 
 export type Action =
     | { type: "goto"; role: ChamberRole }
@@ -31,7 +31,18 @@ export type Action =
     | { type: "dropCorpse" }
     | { type: "clearUndertaking" }
     | { type: "tendBrood" }
-    | { type: "feedQueen" };
+    | { type: "feedQueen" }
+    | {type: "sleep" };
+
+export function isSleepy(ant: Ant): boolean {
+    // ticksAwake alone, NOT (ticksAwake + sleepPhase): sleepPhase already did
+    // its one job at birth, seeding ticksAwake's starting value (ant.ts) so
+    // founding ants don't all nap in lockstep. ticksAwake resets to 0 on
+    // every wake, so re-adding the constant sleepPhase here would make an
+    // ant born with a high phase satisfy this threshold again the instant it
+    // wakes (0 + that same phase), sleeping forever.
+    return ant.ticksAwake % SLEEP_CYCLE_TICKS >= SLEEP_CYCLE_TICKS - SLEEP_DURATION_TICKS;
+}
 
 export function decide(ant: Ant, perception: Perception): Action {
     // Rule 1: hungry — go eat, wherever else you were headed. Nest-only: a
@@ -51,7 +62,24 @@ export function decide(ant: Ant, perception: Perception): Action {
         return perception.currentChamber === "FOOD_STORAGE" ? { type: "eat" } : { type: "goto", role: "FOOD_STORAGE" };
     }
 
-    // Rule 2: undertaking is a transient override on top of NURSE or FORAGER
+    // Rule 2: sleep — nest-only, unburdened, not mid-undertaking; a laden or
+    // surface ant just runs its normal job logic and sleeps a tick or two
+    // later once it's home and clear. Naps happen in a rest chamber
+    // (COMMONS, or NURSERY for a nurse); everyone else heads to COMMONS
+    // first, which is what produces clusters of resting ants.
+    if (
+        isSleepy(ant) &&
+        perception.where === "nest" &&
+        ant.carrying.length === 0 &&
+        ant.carryingFood === 0 &&
+        !ant.undertaking
+    ) {
+        const inRestChamber = perception.currentChamber === "COMMONS" ||
+            (ant.job === "NURSE" && perception.currentChamber === "NURSERY");
+        return inRestChamber ? { type: "sleep" } : { type: "goto", role: "COMMONS" };
+    }
+
+    // Rule 3: undertaking is a transient override on top of NURSE or FORAGER
     // — an undertaking ant never falls through to its base job's rules while
     // the override is active. After hunger (a hungry undertaker eats first),
     // which in practice never matters — a haul is far shorter than starving.
@@ -59,7 +87,7 @@ export function decide(ant: Ant, perception: Perception): Action {
         return decideUndertaker(perception);
     }
 
-    // Rule 3: hand off to the job-specific state machine. One file each:
+    // Rule 4: hand off to the job-specific state machine. One file each:
     // nursing.ts (ferry eggs + tend brood), foraging.ts (the surface round
     // trip). Workers are only ever NURSE or FORAGER, so the final branch is
     // exhaustive; the mill fallback is just a total-function guard.

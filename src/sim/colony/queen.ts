@@ -19,7 +19,7 @@ import type { ColonyState } from "../state";
 import { layEgg, type Brood } from "./brood";
 import { allTilesOf, chamberIdAt } from "../world/nest";
 import { getNeighbors, isPassable, manhattanDistance, type Position } from "../world/grid";
-import { BASE_LAY_PROBABILITY, NURSERY_TILE_CAPACITY, POPULATION_SOFT_TARGET, QUEEN_STEP_INTERVAL_TICKS } from "../params";
+import { BASE_LAY_PROBABILITY, NURSERY_TILE_CAPACITY, POPULATION_SOFT_TARGET, QUEEN_STEP_INTERVAL_TICKS, SLEEP_CYCLE_TICKS, SLEEP_DURATION_TICKS, QUEEN_SLEEP_MULT } from "../params";
 import { layFactor } from "../environment/season";
 
 export type QueenTickResult = {
@@ -75,18 +75,34 @@ export function tickQueen(state: ColonyState): QueenTickResult {
         };
     }
 
-    if (state.simTime % QUEEN_STEP_INTERVAL_TICKS === 0) {
+    const queenCycle = SLEEP_CYCLE_TICKS * QUEEN_SLEEP_MULT;
+    const queenSleepDuration = SLEEP_DURATION_TICKS * QUEEN_SLEEP_MULT;
+
+    if (queen.asleep) {
+        if (state.simTime >= queen.wakeAt) {
+            queen = {...queen, asleep: false, ticksAwake: 0};
+        }
+    } else {
+        // ticksAwake alone (see ants/behavior.ts's isSleepy) — not
+        // + sleepPhase, which only seeded her starting ticksAwake at birth.
+        const due = queen.ticksAwake % queenCycle >= queenCycle - queenSleepDuration;
+        if (due) {
+            queen = {...queen, asleep: true, wakeAt: state.simTime + queenSleepDuration, ticksAwake: 0};
+        }
+    }
+
+    if (!queen.asleep && state.simTime % QUEEN_STEP_INTERVAL_TICKS === 0) {
         const chamberId = chamberIdAt(state.nest, queen.location.pos);
         const chamber = state.nest.chambers.find((c) => c.id === chamberId);
 
         if (chamber && chamber.tiles.length > 0) {
             const PATROL_TICKS = QUEEN_STEP_INTERVAL_TICKS * 20;
             const targetIndex = Math.floor(state.simTime / PATROL_TICKS) % chamber.tiles.length;
-            const target = chamber.tiles[targetIndex];
+            const target = chamber.tiles[targetIndex]
 
             const newPos = queenStep(state, chamber.id, queen.location.pos, target);
-            const location: AntLocation = { where: "nest", pos: newPos };
-            queen = { ...queen, location };
+            const location: AntLocation = {where: "nest", pos: newPos};
+            queen = {...queen, location};
         }
     }
 
@@ -106,7 +122,7 @@ export function tickQueen(state: ColonyState): QueenTickResult {
     // nursery is full), then gate on capacity.
     const roll = rng(state.rngSeed);
     const nurseryCapacity = allTilesOf(state.nest, "NURSERY").length * NURSERY_TILE_CAPACITY;
-    const shouldLay = roll.value < layProbability && state.brood.length < nurseryCapacity;
+    const shouldLay = !queen.asleep && roll.value < layProbability && state.brood.length < nurseryCapacity;
 
     const brood = shouldLay ? [...state.brood, layEgg(state)] : state.brood;
 
