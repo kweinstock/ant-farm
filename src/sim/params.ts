@@ -49,6 +49,12 @@ export const NOISE_PROBABILITY = 0.2;
 // (capped at half the workers). assignJob still sets a worker's job for the
 // one tick between eclosion and the next allocation pass.
 export const NURSE_BROOD_PER_NURSE = 6;
+// How far past what the CURRENT nurse count can handle the queen (queen.ts)
+// is allowed to lay brood ahead to. 1x is a self-consistent trap (see
+// queen.ts) — the colony settles at the minimum nurse count that exactly
+// supports the brood it already has and never grows past it. >1 leaves room
+// for the allocator to catch up and add more nurses next tick instead.
+export const NURSE_LAY_HEADROOM = 2;
 
 // ---- Queen & brood ----
 export const BASE_LAY_PROBABILITY = 0.3;
@@ -81,13 +87,23 @@ export const SPREAD_FRAC = 0.3;
 export const FOLLOW_THRESHOLD = 5;
 export const DEPOSIT_AMOUNT = 70;
 
+// ---- Alarm ----
+export const ALARM_MAX = 200;
+// 0.7 decayed a fresh deposit below MIN_TRAIL in ~5-6 ticks — barely long
+// enough to render, let alone actually warn anyone nearby. 0.9 stretches
+// that to ~50 ticks (still much faster than TRAIL's 0.95 ~100+, alarm is
+// meant to be urgent-but-temporary, not permanent staining) — long enough
+// for a spreading trail to actually read as a warning. Bug found in review.
+export const ALARM_EVAPORATION_FACTOR = 0.9;
+export const ALARM_DEPOSIT_AMOUNT = 150;
+// 0.4 -> 0.6: a bigger splash per deposit, so a single sighting's alarm
+// actually reads a few tiles wide instead of one hot cell with faint edges —
+// combined with the slower evaporation above, a cluster of fleeing ants now
+// leaves something that looks like a spreading warning, not a pinprick.
+export const ALARM_SPREAD_FRAC = 0.6;
+export const ALARM_FLEE_THRESHOLD = 30;
+
 // ---- Surface food piles ----
-// Two knobs size the food on a tile: a fresh pile spawns holding
-// FOOD_PILE_START_AMOUNT, and repeated spawns onto a tile that already has a
-// pile top it up — never past FOOD_TILE_CAPACITY. So one tile holds at most
-// the capacity, and the whole map at most MAX_PILES * FOOD_TILE_CAPACITY.
-// (No patch-vs-open size split any more — patches stay the richer find only
-// because PATCH_SPAWN_BIAS aims more spawns at them.)
 export const MAX_PILES = 64;
 export const FOOD_PILE_START_AMOUNT = 300;
 export const FOOD_TILE_CAPACITY = 500;
@@ -96,11 +112,7 @@ export const PILE_DECAY_TICKS = 400;
 export const HOLE_EXCLUSION_RADIUS = 6;
 export const MAX_SPAWN_ATTEMPTS = 20;
 
-// ---- Phase 7: fertile patches & surface obstacles ----
-// Fertile clearings — small forage-rich pockets scattered through the
-// forest, ringed around the centre hole and clear of the top-left graveyard
-// (see surface.ts). Hand-authored, fixed order, not generated. 8 of them,
-// 8x8, no overlap.
+// ---- fertile patches & surface obstacles ----
 export const FERTILE_PATCHES = [
     { x0: 24, y0: 10, x1: 31, y1: 17 }, // NW
     { x0: 46, y0: 8, x1: 53, y1: 15 },  // N
@@ -116,6 +128,13 @@ export const FERTILE_PATCHES = [
 // forest floor. High — patches are the reliable food; the open map still
 // gets a trickle so a forager caught far from one isn't stranded.
 export const PATCH_SPAWN_BIAS = 0.8;
+
+// How close to a patch's centroid a forager must get before it's allowed to
+// call the patch barren (senses.ts). Without this, stepping onto the
+// outermost tile of the 8x8 rect counted as "explored the whole thing" — an
+// ant would enter a patch and immediately bail to the next one without ever
+// walking toward the middle where a pile is more likely.
+export const PATCH_EXPLORE_RADIUS = 2;
 
 // ---- Forest floor (surface obstacles) ----
 // createSurface walks every tile and rolls FOREST_SEED_BASE against a per-
@@ -230,10 +249,34 @@ export const PREDATOR_SEASON_MULT: Record<Season, number> = {
 export const PREDATOR_WEATHER_MULT: Record<WeatherKind, number> = {
     CLEAR: 1, RAIN: 0.5, WIND: 0.8, HEAT: 1, SNOW: 0.3,
 };
-export const PREDATOR_MIN_DURATION = 30;
-export const PREDATOR_MAX_DURATION = 100;
-export const PREDATOR_STRIKE_RADIUS = 4;
-export const PREDATOR_STRIKE_CHANCE = 0.05;
+
+export const PREDATOR_VISION_RADIUS = 8;
+export const PREDATOR_STRIKE_RANGE = 1;
+export const PREDATOR_STRIKE_CHANCE = 0.4;
+// How long she'll stay locked onto a chase before giving up regardless of
+// visibility, and how long she then refuses to start a new one — without
+// this a predator near a busy hole always has SOME ant to re-acquire and
+// never resumes her cross-map route (bug: "camping the hole" / "stuck in a
+// spot for years").
+export const PREDATOR_HUNT_PATIENCE_TICKS = 15;
+export const PREDATOR_HUNT_COOLDOWN_TICKS = 25;
+// How close to the hole counts as "she's camped on our doorstep" — inside
+// this, fleeing.ts runs an ant directly away from her instead of toward the
+// hole, since "flee toward the hole" would otherwise mean running at her.
+export const PREDATOR_HOME_THREAT_RADIUS = 6;
+// How wide a berth a routed flee-to-the-hole trip gives her when she's
+// somewhere along the way but not close enough to the hole to trigger the
+// "abandon the hole" radius above — a step landing this close to her gets
+// excluded from the route so the ant goes around instead of past/through
+// her (fleeing.ts's moveTowardAvoiding).
+export const PREDATOR_FLEE_AVOID_RADIUS = 3;
+// How long a fled ant stays too spooked to volunteer back onto the surface
+// once it's safe in the nest (senses.ts's isSpooked). Longer than her hunt
+// patience + cooldown (15 + 25) plus real travel time, so a camping visit
+// has actually moved on or left before the colony sends anyone back out —
+// otherwise a predator parked near the hole just eats whoever pops up next.
+export const SPOOK_COOLDOWN_TICKS = 120;
+export const GRAVEYARD_ATTRACTION_MULT = 0.05;
 
 // ---- Season scalars ----
 export const SEASON_FORAGE_ABUNDANCE: Record<Season, number> = {

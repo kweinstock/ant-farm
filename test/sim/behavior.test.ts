@@ -37,6 +37,7 @@ function makePerception(overrides: Partial<Perception> = {}): Perception {
         nearestFoodPilePos: undefined,
         carrying: [],
         hungerRatio: 0.9,
+        foodStoreAmount: 500,
         eggsAvailableInQueenChamber: false,
         ...overrides,
     };

@@ -224,3 +224,34 @@ export function fieldToTile(grid: Grid, target: Position): Int16Array {
     }
     return field;
 }
+
+export function hasLineOfSight(grid: Grid, a: Position, b: Position): boolean {
+    let x0 = a.x;
+    let y0 = a.y;
+    const x1 = b.x;
+    const y1 = b.y;
+
+    const dx = Math.abs(x1 - x0);
+    const sx = x1 > x0 ? 1 : x1 < x0 ? -1 : 0;
+    const dy = -Math.abs(y1 - y0);
+    const sy = y1 > y0 ? 1 : y1 < y0 ? -1 : 0;
+    let err = dx + dy;
+
+    let first = true; // the first point plotted is `a` itself — skip it
+
+    while (!(x0 === x1 && y0 === y1)) {
+        if (!first) {
+            const tile = tileAt(grid, x0, y0);
+            if (tile === TILE.ROCK || tile === TILE.TREE) {
+                return false;
+            }
+        }
+        first = false;
+
+        const e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x0 += sx; }
+        if (e2 <= dx) { err += dx; y0 += sy; }
+    }
+
+    return true;
+}

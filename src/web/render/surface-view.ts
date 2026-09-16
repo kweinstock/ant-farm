@@ -13,7 +13,7 @@ import type { AntId } from "../../sim/ants/ant";
 import type { RenderOptions } from "../ui/view-switch";
 import { SURFACE_CELL_SIZE } from "../config";
 import { drawAnt, drawCorpse } from "./ants";
-import { renderTrail } from "./pheromone-layer";
+import { renderTrail, renderAlarm } from "./pheromone-layer";
 
 const GROUND_COLOR = "#c9b896";
 const PATCH_COLOR = "#7a9c4a";
@@ -28,6 +28,9 @@ const GRAVEYARD_FILL_RGB = "0, 0, 0";
 const PILE_COLOR = "#5c8a3a";
 const PILE_BASE_RADIUS_RATIO = 0.4;
 const PILE_MIN_SCALE = 0.25;
+const PREDATOR_COLOR = "#5c1a1a";
+const PREDATOR_OUTLINE_COLOR = "#1a0808";
+const PREDATOR_RADIUS_RATIO = 0.55;
 
 // Untuned, same spirit as this file's pile params — how many corpses in the
 // graveyard rect counts as "full" shading. CORPSE_DECAY_TICKS (corpses.ts,
@@ -99,6 +102,7 @@ export function renderSurfaceView(ctx: CanvasRenderingContext2D, state: ColonySt
     // visitor's toggle (ui/view-switch.ts); off by default.
     if (options.showTrails) {
         renderTrail(ctx, surface.trail, cellSize);
+        renderAlarm(ctx, surface.alarm, cellSize);
     }
 
     // Graveyard: filled proportionally to how many uncarried corpses
@@ -163,6 +167,18 @@ export function renderSurfaceView(ctx: CanvasRenderingContext2D, state: ColonySt
     ctx.beginPath();
     ctx.arc(holeX, holeY, cellSize * HOLE_RADIUS_RATIO, 0, Math.PI * 2);
     ctx.fill();
+
+    if (state.env.predator) {
+        const px = state.env.predator.pos.x * cellSize + cellSize / 2;
+        const py = state.env.predator.pos.y * cellSize + cellSize / 2;
+        ctx.fillStyle = PREDATOR_COLOR;
+        ctx.strokeStyle = PREDATOR_OUTLINE_COLOR;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(px, py, cellSize * PREDATOR_RADIUS_RATIO, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+    }
 
     // Corpse-carriers, built once per frame — see ants.ts's comment on why
     // the carry-dot tracks carriedBy, not ant.undertaking.

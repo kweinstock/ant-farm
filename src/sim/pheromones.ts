@@ -48,10 +48,10 @@ export function trailAt(field: TrailField, x: number, y: number): number {
     return field.cells[index(field, x, y)];
 }
 
-export function deposit(field: TrailField, x: number, y: number, amount: number): TrailField {
+export function deposit(field: TrailField, x: number, y: number, amount: number, maxValue: number = MAX_TRAIL, spreadFrac: number = SPREAD_FRAC): TrailField {
     const cells = field.cells.slice();
 
-    cells[index(field, x, y)] = Math.min(MAX_TRAIL, cells[index(field, x, y)] + amount);
+    cells[index(field, x, y)] = Math.min(maxValue, cells[index(field, x, y)] + amount);
 
     const offsets: Position[] = [
         { x: 0, y: -1 },
@@ -67,7 +67,7 @@ export function deposit(field: TrailField, x: number, y: number, amount: number)
             continue;
         }
         const i = index(field, nx, ny);
-        cells[i] = Math.min(MAX_TRAIL, cells[i] + amount * SPREAD_FRAC);
+        cells[i] = Math.min(maxValue, cells[i] + amount * spreadFrac);
     }
 
     return { ...field, cells };

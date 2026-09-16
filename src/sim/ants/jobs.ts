@@ -28,6 +28,7 @@ import { eatFromStore } from "../world/resources";
 import { pickUpFood, depositFood, eatFromPile, surfaceStep, surfaceRoute, surfaceWander, noteBarrenPatch } from "./foraging";
 import { moveToNestPoint, pickUpCorpse, dropCorpse, clearUndertaking } from "./undertaking";
 import { pickUpEgg, placeEgg, tendBrood } from "./nursing";
+import { flee } from "./fleeing";
 import { MAX_ENERGY, NURSE_AGE_THRESHOLD_TICKS, SLEEP_CYCLE_TICKS, SLEEP_DURATION_TICKS, SLEEP_DEBT_MAX } from "../params";
 
 export type ActResult = {
@@ -211,6 +212,9 @@ export function act(state: ColonyState, ant: Ant, action: Action): ActResult {
                 rngSeed: state.rngSeed,
             };
         }
+
+        case "flee":
+            return flee(state, ant);
     }
 }
 

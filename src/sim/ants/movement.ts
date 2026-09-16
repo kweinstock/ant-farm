@@ -82,6 +82,55 @@ export function surfaceRouteStep(grid: Grid, pos: Position, target: Position, rn
     return moveToward(grid, fieldToTile(grid, target), pos, rngSeed);
 }
 
+// Like moveToward, but a neighbor within `dangerRadius` of `dangerPos` is
+// off the table unless every neighbor is that close. Bug found in review: a
+// fleeing ant routing straight for the hole had no idea the predator herself
+// might be sitting on or near the shortest path there — the routed field
+// only knows about terrain (ROCK/TREE), not a moving threat, so "flee toward
+// the hole" could walk the ant right past (or into) her. This keeps the
+// routed, obstacle-aware trip toward `target` but steers each step clear of
+// her immediate vicinity — go AROUND, not through.
+export function moveTowardAvoiding(
+    grid: Grid,
+    distanceField: Int16Array,
+    position: Position,
+    dangerPos: Position,
+    dangerRadius: number,
+    rngSeed: number,
+): {position: Position, seed: number} {
+    const hereIndex = getIndex(grid, position.x, position.y);
+
+    if (distanceField[hereIndex] === 0) {
+        return wander(grid, position, rngSeed);
+    }
+
+    const neighbors = passableNeighbors(grid, position.x, position.y);
+
+    if (neighbors.length === 0) {
+        return {position, seed: rngSeed};
+    }
+
+    const safeNeighbors = neighbors.filter((n) => manhattanDistance(n, dangerPos) > dangerRadius);
+    // If she's got the ant boxed in with no safe neighbor, there's no "around"
+    // left to route through — fall back to the full set rather than freeze.
+    const pool = safeNeighbors.length > 0 ? safeNeighbors : neighbors;
+
+    const neighborDistances = pool.map((neighbor) => distanceField[getIndex(grid, neighbor.x, neighbor.y)]);
+    const minDistance = Math.min(...neighborDistances);
+    const bestNeighbors = pool.filter((_, i) => neighborDistances[i] === minDistance);
+
+    const noiseRoll = rng(rngSeed);
+    const useNoise = noiseRoll.value < NOISE_PROBABILITY;
+    const candidates = useNoise ? pool : (bestNeighbors.length > 0 ? bestNeighbors : pool);
+
+    const pick = randomInt(noiseRoll.seed, 0, candidates.length - 1);
+
+    return {
+        position: candidates[pick.value],
+        seed: pick.seed,
+    };
+}
+
 export function stepToward(grid: Grid, pos: Position, target: Position, rngSeed: number): {position: Position, seed: number} {
     if (pos.x === target.x && pos.y === target.y) {
         return wander(grid, pos, rngSeed);
@@ -100,6 +149,36 @@ export function stepToward(grid: Grid, pos: Position, target: Position, rngSeed:
     const noiseRoll = rng(rngSeed);
     const useNoise = noiseRoll.value < NOISE_PROBABILITY;
     const candidates = useNoise ? neighbors : (bestNeighbors.length > 0 ? bestNeighbors : neighbors);
+
+    const pick = randomInt(noiseRoll.seed, 0, candidates.length - 1);
+
+    return {
+        position: candidates[pick.value],
+        seed: pick.seed,
+    };
+}
+
+// The mirror image of stepToward — maximize distance from `dangerPos`
+// instead of minimizing distance to a goal. Used by fleeing.ts when the
+// "safe" destination (the hole) is itself compromised: there's no fixed
+// target to route toward, just a direction to get away in, so this stays
+// greedy the same way stepToward is (an obstacle sidesteps locally; it
+// doesn't need a routed field for a one-tile "get away" decision the way a
+// laden forager's multi-tile trip home does).
+export function stepAwayFrom(grid: Grid, pos: Position, dangerPos: Position, rngSeed: number): {position: Position, seed: number} {
+    const neighbors = passableNeighbors(grid, pos.x, pos.y);
+
+    if (neighbors.length === 0) {
+        return {position: pos, seed: rngSeed};
+    }
+
+    const neighborDistances = neighbors.map((neighbor) => manhattanDistance(neighbor, dangerPos));
+    const maxDistance = Math.max(...neighborDistances);
+    const bestNeighbors = neighbors.filter((_, i) => neighborDistances[i] === maxDistance);
+
+    const noiseRoll = rng(rngSeed);
+    const useNoise = noiseRoll.value < NOISE_PROBABILITY;
+    const candidates = useNoise ? neighbors : bestNeighbors;
 
     const pick = randomInt(noiseRoll.seed, 0, candidates.length - 1);
 

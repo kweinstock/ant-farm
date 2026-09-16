@@ -19,7 +19,7 @@ import type { ColonyState } from "../state";
 import { layEgg, type Brood } from "./brood";
 import { allTilesOf, chamberIdAt } from "../world/nest";
 import { getNeighbors, isPassable, manhattanDistance, type Position } from "../world/grid";
-import { BASE_LAY_PROBABILITY, NURSERY_TILE_CAPACITY, POPULATION_SOFT_TARGET, QUEEN_STEP_INTERVAL_TICKS, SLEEP_CYCLE_TICKS, SLEEP_DURATION_TICKS, QUEEN_SLEEP_MULT } from "../params";
+import { BASE_LAY_PROBABILITY, NURSERY_TILE_CAPACITY, NURSE_BROOD_PER_NURSE, NURSE_LAY_HEADROOM, POPULATION_SOFT_TARGET, QUEEN_STEP_INTERVAL_TICKS, SLEEP_CYCLE_TICKS, SLEEP_DURATION_TICKS, QUEEN_SLEEP_MULT } from "../params";
 import { layFactor } from "../environment/season";
 
 export type QueenTickResult = {
@@ -122,7 +122,41 @@ export function tickQueen(state: ColonyState): QueenTickResult {
     // nursery is full), then gate on capacity.
     const roll = rng(state.rngSeed);
     const nurseryCapacity = allTilesOf(state.nest, "NURSERY").length * NURSERY_TILE_CAPACITY;
-    const shouldLay = !queen.asleep && roll.value < layProbability && state.brood.length < nurseryCapacity;
+
+    // The physical tile cap alone let her lay far faster than the CURRENT
+    // nurse count could ever ferry+tend — workforce.ts's allocator responds
+    // to brood load, but only after the fact, so a laying binge would already
+    // have piled up a backlog of eggs the existing nurses can't touch before
+    // some of it stalls/dies. Gate on nurse throughput too, using the same
+    // per-nurse ratio the allocator itself targets, so she never lays the
+    // colony further ahead of its nursing capacity than that ratio allows.
+    let nurseCount = 0;
+    for (const ant of state.ants.values()) {
+        if (ant.caste === "WORKER" && ant.job === "NURSE") nurseCount += 1;
+    }
+    // NURSE_LAY_HEADROOM matters, not just a fudge factor: workforce.ts's
+    // allocator sizes nurses off THIS tick's brood count, so a 1x cap here
+    // (brood capped at exactly nurseCount * ratio) is a self-consistent trap
+    // — 1 nurse supports exactly 6 brood, which in turn only ever justifies
+    // 1 nurse, forever. Found in review: a colony would settle at 1 nurse /
+    // 6 brood permanently and stop growing. Capping at a multiple of current
+    // capacity instead leaves room for brood to grow past what today's
+    // nurses handle, which is what pulls the allocator into assigning more
+    // next tick — the cap still throttles the queen well below the old
+    // unconstrained nursery-tile cap, it just isn't pinned to a fixed point.
+    // Floor of one nurse's worth even at nurseCount === 0: workforce.ts only
+    // ever allocates a nurse once there's brood to justify one
+    // (desiredNurseCount(0, W) = 0), so a hard `nurseCount * ratio` cap would
+    // deadlock the colony the instant brood ever hits zero — nothing could
+    // lay the egg that would bring the first nurse back. This still throttles
+    // her to the real ratio everywhere else; it only guarantees the one egg
+    // that restarts the cycle.
+    const nurseCapacity = Math.max(nurseCount * NURSE_BROOD_PER_NURSE * NURSE_LAY_HEADROOM, NURSE_BROOD_PER_NURSE);
+
+    const shouldLay =
+        !queen.asleep &&
+        roll.value < layProbability &&
+        state.brood.length < Math.min(nurseryCapacity, nurseCapacity);
 
     const brood = shouldLay ? [...state.brood, layEgg(state)] : state.brood;
 

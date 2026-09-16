@@ -54,6 +54,17 @@ export function decideForager(ant: Ant, perception: Perception): Action {
 
             return perception.currentChamber === "FOOD_STORAGE" ? { type: "depositFood" } : { type: "goto", role: "FOOD_STORAGE" };
         }
+
+        // Just fled a predator into the nest — don't turn straight back
+        // around. Bug found in review: a forager that escapes underground
+        // used to head right back out next tick with nothing to stop it, so
+        // a predator camped near the hole could just sit there eating
+        // whoever popped up next. Sit it out in the nest until the cooldown
+        // clears instead.
+        if (perception.isSpooked) {
+            return perception.currentChamber === "COMMONS" ? { type: "mill" } : { type: "goto", role: "COMMONS" };
+        }
+
         return perception.atExitMouth ? { type: "crossExit" } : { type: "goto", role: "EXIT" };
     }
 
@@ -174,7 +185,7 @@ export function eatFromPile(state: ColonyState, ant: Ant): ActResult {
     };
 }
 
-function applySurfaceMove(state: ColonyState, ant: Ant, result: { position: Position; seed: number }): ActResult {
+export function applySurfaceMove(state: ColonyState, ant: Ant, result: { position: Position; seed: number }): ActResult {
     const location: AntLocation = { where: "surface", pos: result.position };
 
     const corpses = state.corpses.some((corpse) => corpse.carriedBy === ant.id)

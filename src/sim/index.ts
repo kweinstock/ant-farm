@@ -73,18 +73,19 @@ import { act } from "./ants/jobs";
 import { tickQueen } from "./colony/queen";
 import { advanceBrood, type BroodLostEvent } from "./colony/brood";
 import { reassignJobs } from "./colony/workforce";
-import { spawnFoodPiles, ageFoodPiles } from "./world/surface";
+import { spawnFoodPiles, ageFoodPiles, inGraveyard } from "./world/surface";
 import { createCorpse, ageCorpses, assignUndertakers } from "./corpses";
 import { evaporate } from "./pheromones";
 import { rng } from "./rng";
 import type { ColonyState } from "./state";
 import type { AntId } from "./ants/ant";
-import { SURFACE_DEATH_CHANCE, WANDER_EXPOSURE, RAIN_EXPOSURE_MULT, WIND_EXPOSURE_MULT, RAIN_EVAPORATION_FACTOR, PREDATOR_MAX_DURATION } from "./params";
+import type { Position } from "./world/grid";
+import { SURFACE_DEATH_CHANCE, WANDER_EXPOSURE, RAIN_EXPOSURE_MULT, WIND_EXPOSURE_MULT, RAIN_EVAPORATION_FACTOR, PREDATOR_STRIKE_CHANCE, ALARM_EVAPORATION_FACTOR } from "./params";
 import { seasonOf } from "./environment/season";
 import { timeOfDay, dayOfYear, phaseOfDay } from "./environment/clock";
 import { ambientTemp, tempAtDepth } from "./environment/temperature";
 import { advanceWeather, type WeatherKind } from "./environment/weather";
-import { advancePredator, predatorStrikeChance, coldDeathChance } from "./environment/hazards";
+import { advancePredator, predatorCanStrike, coldDeathChance } from "./environment/hazards";
 import type { EnvState } from "./state";
 
 
@@ -157,7 +158,22 @@ function recordDeath(corpses: ColonyState["corpses"], nextCorpseId: number, dead
 function killWorker(cs: ColonyState, dead: Parameters<typeof recordDeath>[2], cause: DeathEvent["cause"], events: SimEvent[]): ColonyState {
     const nextAnts = new Map(cs.ants);
     nextAnts.delete(dead.id);
-    const { corpses, nextCorpseId } = recordDeath(cs.corpses, cs.nextCorpseId, dead);
+
+    // A predator kill is eaten on the spot — no corpse for an undertaker to
+    // find or a graveyard to receive. Bug found in review: this used to run
+    // recordDeath unconditionally, leaving a body behind exactly as if she'd
+    // died of old age. Anything the ant was itself hauling still needs to be
+    // released, not vanish with its carrier.
+    let corpses = cs.corpses;
+    let nextCorpseId = cs.nextCorpseId;
+    if (cause === "predator") {
+        corpses = corpses.some((corpse) => corpse.carriedBy === dead.id)
+            ? corpses.map((corpse) => (corpse.carriedBy === dead.id ? { ...corpse, carriedBy: undefined } : corpse))
+            : corpses;
+    } else {
+        ({ corpses, nextCorpseId } = recordDeath(cs.corpses, cs.nextCorpseId, dead));
+    }
+
     events.push({ kind: "death", antId: dead.id, ageTicks: dead.ageTicks, where: dead.location.where, cause });
     return { ...cs, ants: nextAnts, corpses, nextCorpseId };
 }
@@ -223,11 +239,17 @@ function singleTick(state: ColonyState): TickResult {
                 continue;
             }
 
-            const strikeChance = predatorStrikeChance(currentState.env.predator ?? undefined, metered.location.pos);
-            if (strikeChance > 0) {
+            if (predatorCanStrike(currentState.env.predator ?? undefined, {id: metered.id, pos: metered.location.pos})) {
+                // Bug found in review: this was `>= PREDATOR_STRIKE_CHANCE`,
+                // which — with a strict `<` roll uniform on [0,1) — makes the
+                // kill probability `1 - PREDATOR_STRIKE_CHANCE` (60% at the
+                // current 0.4), the inverse of what the name says and of the
+                // `roll.value < chance` convention every other hazard roll in
+                // this file already uses two lines up (hazardRoll < baseChance)
+                // and in hazards.ts/queen.ts/surface.ts.
                 const strikeRoll = rng(currentState.rngSeed);
                 currentState = { ...currentState, rngSeed: strikeRoll.seed };
-                if (strikeRoll.value < strikeChance) {
+                if (strikeRoll.value < PREDATOR_STRIKE_CHANCE) {
                     events.push({ kind: "predatorStrike", antId: metered.id });
                     currentState = killWorker(currentState, metered, "predator", events);
                     continue;
@@ -340,7 +362,16 @@ function singleTick(state: ColonyState): TickResult {
     const spawnResult = spawnFoodPiles(currentState.surface, currentState.rngSeed, currentState.env.season);
     const surfaceAfterSpawn = ageFoodPiles(spawnResult.surface);
     const evapFactor = currentState.env.weather.kind === "RAIN" ? RAIN_EVAPORATION_FACTOR : undefined;
-    const surface = { ...surfaceAfterSpawn, trail: evaporate(surfaceAfterSpawn.trail, evapFactor) };
+    const surface = {
+        ...surfaceAfterSpawn,
+        trail: evaporate(surfaceAfterSpawn.trail, evapFactor),
+        // Alarm decays on its own fast schedule (ALARM_EVAPORATION_FACTOR),
+        // unaffected by rain — without this the alarm channel only ever
+        // grows (deposit's ceiling is ALARM_MAX, there's no floor pulling it
+        // back down), so any cell that ever saw a predator flees ants
+        // forever. Bug found in review: this call was missing entirely.
+        alarm: evaporate(surfaceAfterSpawn.alarm, ALARM_EVAPORATION_FACTOR),
+    };
     const corpses = ageCorpses(currentState.corpses);
 
     return {
@@ -377,18 +408,54 @@ function advanceEnvironment(state: ColonyState): { state: ColonyState; events: S
         events.push({ kind: "weatherChanged", from: state.env.weather.kind, to: weatherStep.weather.kind });
     }
 
+    const surfaceAnts: { id: AntId; pos: Position }[] = Array.from(state.ants.values())
+        .filter((ant) => ant.location.where === "surface")
+        .map((ant) => ({ id: ant.id, pos: ant.location.pos }));
+    
+    const graveyardBodyCount = state.corpses.filter(
+        (corpse) =>
+            corpse.carriedBy === undefined &&
+            corpse.location.where === "surface" &&
+            inGraveyard(state.surface, corpse.location.pos),
+    ).length;
+
+    const graveyardCentre: Position = {
+        x: Math.floor((state.surface.graveyard.x0 + state.surface.graveyard.x1) / 2),
+        y: Math.floor((state.surface.graveyard.y0 + state.surface.graveyard.y1) / 2),
+    };
+
     const predatorStep = advancePredator(
         state.env.predator ?? undefined,
-        { season, weatherKind: weather.kind, holePos: state.surface.holePos, surfaceWidth: state.surface.grid.width },
+        { season, weatherKind: weather.kind },
+        state.surface.grid,
+        surfaceAnts,
+        { bodyCount: graveyardBodyCount, centre: graveyardCentre },
         weatherStep.seed,
     );
+
     let predator = predatorStep.predator;
     if (ov?.predatorAlways && predator === undefined) {
-        predator = { pos: { ...state.surface.holePos }, ticksRemaining: PREDATOR_MAX_DURATION };
+        const width = state.surface.grid.width;
+        const height = state.surface.grid.height;
+        // roamTargetPos must NOT equal pos: advancePredator's arrival check
+        // (unhunted + already there) fires the instant she's handed back to
+        // it, and with an empty graveyard graveyardPullChance(0) is 0, so she
+        // despawned on literally the next tick, every tick, and never got a
+        // chance to hunt anyone — this override effectively never had a
+        // predator in play. Bug found in review. Give her a real far-edge
+        // target, same as a natural spawn (entry N -> target S).
+        predator = {
+            pos: {x: Math.floor(width / 2), y: 0},
+            entryEdge: "N",
+            roamTargetPos: {x: Math.floor(width / 2), y: height - 1},
+            huntingAntId: undefined,
+            huntStreak: 0,
+            huntCooldownTicks: 0,
+        };
     }
     if (!ov?.predatorAlways) {
-        if (predatorStep.appeared) events.push({ kind: "predatorAppeared" });
-        if (predatorStep.left) events.push({ kind: "predatorLeft" });
+        if (predatorStep.appeared) events.push({kind: "predatorAppeared"});
+        if (predatorStep.left) events.push({kind: "predatorLeft"});
     }
 
     const env: EnvState = {

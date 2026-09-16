@@ -242,7 +242,7 @@ function buildText(state: ColonyState, stats: TuningStats): string {
         `tick: ${tick}   season: ${env.season}   day-of-year: ${env.dayOfYear}   time: ${env.timeOfDay}`,
         `weather: ${env.weather.kind} (${env.weather.ticksRemaining}t left)   forecast: ${forecastStrip}`,
         `temp: ${env.ambientTemp.toFixed(1)}\u00b0${coldActive ? "  [COLD-DEATH ACTIVE]" : ""}`,
-        `predator: ${env.predator ? `Y (${env.predator.ticksRemaining}t left)` : "N"}   strikes total: ${stats.predatorStrikesTotal}`,
+        `predator: ${env.predator ? `Y at (${env.predator.pos.x},${env.predator.pos.y})${env.predator.huntingAntId ? " [hunting]" : ""}` : "N"}   strikes total: ${stats.predatorStrikesTotal}`,
     ]);
 
     // ---- Colony structure ----

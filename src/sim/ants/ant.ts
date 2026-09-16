@@ -31,6 +31,12 @@ export type Ant = {
     wakeAt: number;
     ticksAwake: number;
     sleepPhase: number;
+    // Phase 10 review: how long this ant stays too spooked to volunteer back
+    // onto the surface after fleeing (senses.ts's isSpooked, gated against
+    // simTime). Without this a forager that just escaped into the nest would
+    // turn straight back around next tick — a predator camped near the hole
+    // could just sit there eating whatever kept coming up.
+    spookedUntil: number;
 };
 
 export function createWorker(id: AntId, position: Position, currentSeed: number): {ant: Ant; seed: number} {
@@ -61,6 +67,7 @@ export function createWorker(id: AntId, position: Position, currentSeed: number)
             wakeAt: 0,
             ticksAwake: sleepPhase.value,
             sleepPhase: sleepPhase.value,
+            spookedUntil: 0,
         },
         seed: sleepPhase.seed,
     };
@@ -87,6 +94,7 @@ export function createQueen(id: AntId, position: Position, currentSeed: number):
             wakeAt: 0,
             ticksAwake: sleepPhase.value,
             sleepPhase: sleepPhase.value,
+            spookedUntil: 0,
         },
         seed: sleepPhase.seed,
     };

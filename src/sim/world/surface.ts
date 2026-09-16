@@ -49,6 +49,7 @@ export type Surface = {
     foodPiles: FoodPile[];
     nextPileId: number;
     trail: TrailField;
+    alarm: TrailField;
 };
 
 function inRect(pos: Position, rect: Rect): boolean {
@@ -321,6 +322,7 @@ export function createSurface(width: number, height: number): Surface {
         foodPiles: [],
         nextPileId: 1,
         trail: createTrailField(width, height),
+        alarm: createTrailField(width, height),
     };
 }
 

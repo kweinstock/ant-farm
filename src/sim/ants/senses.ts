@@ -8,13 +8,14 @@
 import type { Ant } from "./ant";
 import { chamberAt, chamberIdAt, exitMouth, type ChamberId, type ChamberRole } from "../world/nest";
 import { nearestPile, inGraveyard as surfaceInGraveyard, graveyardSlot, type FoodPileId } from "../world/surface";
-import { manhattanDistance, type Position } from "../world/grid";
+import { hasLineOfSight, manhattanDistance, type Position } from "../world/grid";
 import type { ColonyState } from "../state";
 import type { BroodId } from "../colony/brood";
 import { corpseById } from "../corpses";
-import { strongestPassableNeighbor } from "../pheromones";
+import { strongestPassableNeighbor, trailAt } from "../pheromones";
 import { bestRememberedSite, patchKnownEmpty } from "./memory";
-import { MAX_ENERGY, NURSERY_TILE_CAPACITY, SIGHT_RADIUS, QUEEN_HUNGER_RATIO, TEND_INTERVAL_TICKS, TEND_STALL_TICKS } from "../params";
+import { MAX_ENERGY, NURSERY_TILE_CAPACITY, SIGHT_RADIUS, QUEEN_HUNGER_RATIO, TEND_INTERVAL_TICKS, TEND_STALL_TICKS, PREDATOR_VISION_RADIUS, PATCH_EXPLORE_RADIUS } from "../params";
+
 
 export type Perception = {
     where: "nest" | "surface";
@@ -27,6 +28,11 @@ export type Perception = {
     eggsWaitingCount: number;
     queenHungry: boolean;
     queenPos: Position;
+    predatorVisible: boolean;
+    predatorPos: Position | undefined;
+    beingChased: boolean;
+    alarmLevel: number;
+    isSpooked: boolean;
     atExitMouth: boolean;
     atHole: boolean;
     holePos: Position;
@@ -40,6 +46,7 @@ export type Perception = {
     graveyardCentre: Position;
     carrying: BroodId[];
     hungerRatio: number;
+    foodStoreAmount: number;
     eggsAvailableInQueenChamber: boolean;
     assignedCorpse: { pos: Position; where: "nest" | "surface" } | undefined;
     assignedCorpseBuried: boolean;
@@ -137,6 +144,17 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
     const queenHungry = queen !== undefined && queen.energy / MAX_ENERGY < QUEEN_HUNGER_RATIO;
     const queenPos: Position = queen !== undefined ? queen.location.pos : pos;
 
+    const predator = state.env.predator ?? undefined;
+    const predatorVisible = 
+        where === "surface" &&
+        predator !== undefined &&
+        manhattanDistance(predator.pos, pos) <= PREDATOR_VISION_RADIUS &&
+        hasLineOfSight(state.surface.grid, pos, predator.pos);
+    const predatorPos = predatorVisible ? predator!.pos : undefined;
+    const beingChased = where === "surface" && predator !== undefined && predator.huntingAntId === ant.id;
+    const alarmLevel = where === "surface" ? trailAt(state.surface.alarm, pos.x, pos.y) : 0;
+    const isSpooked = ant.spookedUntil > state.simTime;
+
     const mouth = where === "nest" ? exitMouth(state.nest) : undefined;
     const atExitMouth = mouth !== undefined && pos.x === mouth.x && pos.y === mouth.y;
 
@@ -206,35 +224,52 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
             }
         }
 
-        // Standing in a patch, close enough to see the whole 8x8, and there's
-        // no pile in it — that's a first-hand "this one's dry" observation.
-        if (currentPatchIndex >= 0 && !patchHasPile(patches[currentPatchIndex])) {
-            barrenPatchIndex = currentPatchIndex;
-        }
-
-        // Explore the nearest patch this ant hasn't just written off as
-        // empty, skipping the one it's standing in. `fallback` (plain
-        // nearest) covers the case where every other patch is
-        // remembered-empty — better to re-check a stale one than freeze.
-        let bestDist = Infinity;
-        let fallbackDist = Infinity;
-        let fallback: Position | undefined;
-        for (let i = 0; i < patches.length; i++) {
-            if (i === currentPatchIndex) continue;
-            const centroid = centroidOf(patches[i]);
-            const d = manhattanDistance(pos, centroid);
-
-            if (d < fallbackDist) {
-                fallbackDist = d;
-                fallback = centroid;
-            }
-            if (patchKnownEmpty(ant.memory, i, state.simTime)) continue;
-            if (d < bestDist) {
-                bestDist = d;
+        // Standing anywhere in the patch's 8x8 footprint used to be treated
+        // as "explored it" — an ant one tile past the boundary, having seen
+        // nothing of the interior, would call the whole patch barren and
+        // immediately leave (bug found in review: "they don't go up the
+        // tile, they just enter a food section [and bail]"). Now it has to
+        // actually walk toward the middle first.
+        let exploringCurrentPatch = false;
+        if (currentPatchIndex >= 0) {
+            const centroid = centroidOf(patches[currentPatchIndex]);
+            if (manhattanDistance(pos, centroid) > PATCH_EXPLORE_RADIUS) {
+                // Just crossed the edge — head for the middle before judging
+                // it. Skip the next-patch search below entirely this tick.
                 nearestPatchTarget = centroid;
+                exploringCurrentPatch = true;
+            } else if (!patchHasPile(patches[currentPatchIndex])) {
+                // Actually reached the interior and it's still dry — now
+                // it's a real observation.
+                barrenPatchIndex = currentPatchIndex;
             }
         }
-        if (nearestPatchTarget === undefined) nearestPatchTarget = fallback;
+
+        if (!exploringCurrentPatch) {
+            // Explore the nearest patch this ant hasn't just written off as
+            // empty, skipping the one it's standing in. `fallback` (plain
+            // nearest) covers the case where every other patch is
+            // remembered-empty — better to re-check a stale one than freeze.
+            let bestDist = Infinity;
+            let fallbackDist = Infinity;
+            let fallback: Position | undefined;
+            for (let i = 0; i < patches.length; i++) {
+                if (i === currentPatchIndex) continue;
+                const centroid = centroidOf(patches[i]);
+                const d = manhattanDistance(pos, centroid);
+
+                if (d < fallbackDist) {
+                    fallbackDist = d;
+                    fallback = centroid;
+                }
+                if (patchKnownEmpty(ant.memory, i, state.simTime)) continue;
+                if (d < bestDist) {
+                    bestDist = d;
+                    nearestPatchTarget = centroid;
+                }
+            }
+            if (nearestPatchTarget === undefined) nearestPatchTarget = fallback;
+        }
     }
 
     // "Available" means: still an EGG, physically still sitting in the
@@ -292,6 +327,11 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
         eggsWaitingCount,
         queenHungry,
         queenPos,
+        predatorVisible,
+        predatorPos,
+        beingChased,
+        alarmLevel,
+        isSpooked,
         atExitMouth,
         atHole,
         holePos,
@@ -303,6 +343,7 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
         barrenPatchIndex,
         carrying: ant.carrying,
         hungerRatio: ant.energy / MAX_ENERGY,
+        foodStoreAmount: state.foodStore.amount,
         eggsAvailableInQueenChamber,
         assignedCorpse,
         assignedCorpseBuried,

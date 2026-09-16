@@ -121,9 +121,19 @@ describe("balance under extreme environments", () => {
         expect(r.finalState.ants.size).toBeLessThan(100);
     });
 
-    it("constant predator at the exit: foragers are struck, colony declines, no crash", () => {
+    it("constant predator at the exit: foragers are struck, colony survives under pressure, no crash", () => {
         const r = runScenario(4004, { predatorAlways: true }, "constant predator");
         expect(r.everSawPredator).toBe(true);
-        expect(r.predatorStrikes).toBeGreaterThan(20);
+        // Phase 10: ants see and flee her, and she can't camp forever (a hunt
+        // patience/cooldown stops her permanently locking onto whoever's
+        // nearest the hole — see hazards.ts). So "always present" no longer
+        // means "permanent foraging lockdown, guaranteed decline": she gets
+        // some genuine strikes in, but the colony can find windows to feed
+        // itself between her hunts too. This only checks the hazard is real
+        // (some strikes happen) and nothing corrupts — assertHealthy (every
+        // 250 ticks + at the end) is what actually guards NaN/negative/
+        // over-cap state; growth vs. decline under permanent predation isn't
+        // pinned to a direction here.
+        expect(r.predatorStrikes).toBeGreaterThan(0);
     });
 });
