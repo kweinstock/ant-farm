@@ -13,7 +13,8 @@
     "deploy": "npm run build && wrangler deploy",
     "deploy:testing": "npm run build && wrangler deploy --env testing",
     "test": "vitest run",
-    "test:basic": "npx tsx scripts/print-sim.ts"
+    "test:basic": "npx tsx scripts/print-sim.ts",
+    "optimize-params": "npx tsx scripts/optimize-params.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

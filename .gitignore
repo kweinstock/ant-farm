@@ -22,3 +22,9 @@ npm-debug.log*
 # Wrangler
 .wrangler/
 .dev.vars*
+
+# scripts/optimize-params.ts's safety-net snapshot of params.ts, taken
+# before it starts mutating the real file — normally deleted when the
+# script exits cleanly, ignored here in case it's ever left behind by an
+# unclean kill (see that script's header for how to restore from it).
+src/sim/.params-backup.ts

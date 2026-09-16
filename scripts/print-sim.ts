@@ -8,9 +8,17 @@
 // instead; individual birth/death events still print immediately since
 // those are milestones worth seeing as they happen, not just folded into
 // the next summary line.
+//
+// Updated for Phase 9/10: the summary line was still Phase 3-shaped (pop /
+// nurses / foragers / brood) and had nothing about sleep, predators, or
+// death causes — three of the biggest things that now happen during a run.
+// Predator appear/leave/strike are milestone events (same tier as
+// birth/queen-death); asleep count and a running death tally are cheap
+// enough to fold into every summary line.
 import { createInitialState } from "../src/sim/state";
 import { step } from "../src/sim";
 import { getDemography } from "../src/sim/colony/demography";
+import type { DeathEvent } from "../src/sim";
 
 const seed = 12345;
 
@@ -24,6 +32,14 @@ const SUMMARY_INTERVAL_TICKS = 200;
 
 let state = createInitialState(seed);
 
+const deathsByCause: Record<DeathEvent["cause"], number> = {
+    oldAge: 0,
+    starvation: 0,
+    predator: 0,
+    cold: 0,
+    exposure: 0,
+};
+
 console.log(`Seed: ${seed}`);
 console.log();
 
@@ -32,25 +48,42 @@ for (let tick = 1; tick <= MAX_TICKS; tick++) {
     state = result.state;
 
     for (const event of result.events) {
-        if (event.kind === "birth") {
+        if (event.kind === "death") {
+            deathsByCause[event.cause] += 1;
+            if (event.antId === state.queenId) {
+                // state.queenId still points at her id even after she's
+                // removed from state.ants — this only tells us it WAS her
+                // id, not that she's currently alive, which is exactly the
+                // comparison we want here (there's no colony/caste.ts
+                // succession yet, so this is effectively "the colony just
+                // lost its only queen").
+                console.log(`  [tick ${tick}] QUEEN DIED (age ${event.ageTicks}, cause ${event.cause})`);
+            }
+        } else if (event.kind === "birth") {
             console.log(`  [tick ${tick}] birth: ${event.antId}`);
-        } else if (event.kind === "death" && event.antId === state.queenId) {
-            // state.queenId still points at her id even after she's removed
-            // from state.ants — this only tells us it WAS her id, not that
-            // she's currently alive, which is exactly the comparison we want
-            // here (there's no colony/caste.ts succession yet, so this is
-            // effectively "the colony just lost its only queen").
-            console.log(`  [tick ${tick}] QUEEN DIED (age ${event.ageTicks})`);
+        } else if (event.kind === "predatorAppeared") {
+            console.log(`  [tick ${tick}] predator appeared`);
+        } else if (event.kind === "predatorLeft") {
+            console.log(`  [tick ${tick}] predator left`);
+        } else if (event.kind === "predatorStrike") {
+            console.log(`  [tick ${tick}] predator struck: ${event.antId}`);
         }
     }
 
     if (tick % SUMMARY_INTERVAL_TICKS === 0 || state.ants.size === 0) {
         const demography = getDemography(state);
+        const totalDeaths = Object.values(deathsByCause).reduce((a, b) => a + b, 0);
+        const deathSummary = (Object.entries(deathsByCause) as [DeathEvent["cause"], number][])
+            .filter(([, n]) => n > 0)
+            .map(([cause, n]) => `${cause} ${n}`)
+            .join(", ");
 
         console.log(
-            `Tick ${tick.toString().padStart(5)} | pop ${demography.population
-                .toString()
-                .padStart(3)} (nurses ${demography.nurses}, foragers ${demography.foragers}) | brood ${demography.broodCount}`
+            `Tick ${tick.toString().padStart(5)} | pop ${demography.population.toString().padStart(3)} ` +
+                `(nurses ${demography.nurses}/${demography.awakeNurses} awake, foragers ${demography.foragers}/${demography.awakeForagers} awake, ` +
+                `asleep ${demography.asleep}) | brood ${demography.broodCount} | food ${Math.round(state.foodStore.amount)} | ` +
+                `predator ${state.env.predator ? `at (${state.env.predator.pos.x},${state.env.predator.pos.y})${state.env.predator.huntingAntId ? " [hunting]" : ""}` : "none"} | ` +
+                `deaths ${totalDeaths}${deathSummary ? ` (${deathSummary})` : ""}`
         );
     }
 
