@@ -37,17 +37,17 @@ export const QUEEN_MAX_LIFESPAN_TICKS = 9000;
 export const METABOLISM_COST = 1;
 
 // ---- Jobs, castes, movement, senses ----
-export const NURSE_AGE_THRESHOLD_TICKS = 150;
+export const NURSE_AGE_THRESHOLD_TICKS = 50;
 export const NURSERY_TILE_CAPACITY = 3;
 export const NURSE_EGG_CAPACITY = 5;
 export const SIGHT_RADIUS = 11;
 export const NOISE_PROBABILITY = 0.2;
-export const NURSE_BROOD_PER_NURSE = 6;
-export const NURSE_LAY_HEADROOM = 2;
+export const NURSE_BROOD_PER_NURSE = 12;
+export const NURSE_LAY_HEADROOM = 2.9453;
 
 // ---- Queen & brood ----
-export const BASE_LAY_PROBABILITY = 0.3;
-export const POPULATION_SOFT_TARGET = 30;
+export const BASE_LAY_PROBABILITY = 0.186;
+export const POPULATION_SOFT_TARGET = 55;
 export const EGG_DURATION_TICKS = 30;
 export const LARVA_DURATION_TICKS = 60;
 export const PUPA_DURATION_TICKS = 50;
@@ -65,25 +65,25 @@ export const EMPTY_PATCH_TTL_TICKS = 200;
 export const MAX_EMPTY_PATCHES_REMEMBERED = 8;
 
 // ---- Pheromones ----
-export const MAX_TRAIL = 500;
-export const EVAPORATION_FACTOR = 0.95;
-export const MIN_TRAIL = 1;
-export const SPREAD_FRAC = 0.3;
-export const FOLLOW_THRESHOLD = 5;
-export const DEPOSIT_AMOUNT = 70;
+export const MAX_TRAIL = 780;
+export const EVAPORATION_FACTOR = 0.9302;
+export const MIN_TRAIL = 5.2667;
+export const SPREAD_FRAC = 0.2756;
+export const FOLLOW_THRESHOLD = 20;
+export const DEPOSIT_AMOUNT = 38;
 
 // ---- Alarm ----
-export const ALARM_MAX = 200;
-export const ALARM_EVAPORATION_FACTOR = 0.9;
-export const ALARM_DEPOSIT_AMOUNT = 150;
-export const ALARM_SPREAD_FRAC = 0.6;
-export const ALARM_FLEE_THRESHOLD = 30;
+export const ALARM_MAX = 216;
+export const ALARM_EVAPORATION_FACTOR = 0.6436;
+export const ALARM_DEPOSIT_AMOUNT = 229;
+export const ALARM_SPREAD_FRAC = 0.738;
+export const ALARM_FLEE_THRESHOLD = 67;
 
 // ---- Surface food piles ----
-export const MAX_PILES = 64;
-export const FOOD_PILE_START_AMOUNT = 300;
-export const FOOD_TILE_CAPACITY = 500;
-export const PILE_SPAWN_CHANCE = 0.1;
+export const MAX_PILES = 125;
+export const FOOD_PILE_START_AMOUNT = 351;
+export const FOOD_TILE_CAPACITY = 623;
+export const PILE_SPAWN_CHANCE = 0.2297;
 export const PILE_DECAY_TICKS = 400;
 export const HOLE_EXCLUSION_RADIUS = 6;
 export const MAX_SPAWN_ATTEMPTS = 20;
