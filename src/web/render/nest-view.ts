@@ -7,7 +7,7 @@
 // share, so this absorbs what used to be three separate files instead of
 // importing them piecemeal. PHASE 3c folds corpses into that same unit.
 import { tileAt, TILE, type Grid } from "../../sim/world/grid";
-import { chamberAt, allTilesOf, type ChamberRole, type Nest } from "../../sim/world/nest";
+import { chamberAt, allTilesOf, frontierTiles, bootstrapFrontierTile, type ChamberRole, type Nest } from "../../sim/world/nest";
 import type { ColonyState } from "../../sim/state";
 import type { Brood } from "../../sim/colony/brood";
 import type { Corpse } from "../../sim/corpses";
@@ -39,6 +39,9 @@ const STAGE_COLOR: Record<string, string> = {
 };
 
 const BROOD_DOT_RADIUS = CELL_SIZE * 0.07;
+const FRONTIER_COLOR = "#8a5a2a";
+const FRONTIER_CLAIMED_COLOR = "#e0902f";
+const FRONTIER_PADDING = CELL_SIZE * 0.15;
 
 // Marks the seam where this pane visually connects to render/surface-view.ts
 // — the two views are one continuous space split across two canvases, not
@@ -82,6 +85,34 @@ function renderTiles(ctx: CanvasRenderingContext2D, grid: Grid, nest: Nest): voi
         ctx.moveTo(0, pixelY);
         ctx.lineTo(grid.width * CELL_SIZE, pixelY);
         ctx.stroke();
+    }
+}
+
+function renderDigFrontier(ctx: CanvasRenderingContext2D, state: ColonyState): void {
+    const plan = state.pendingDigPlan;
+    if (!plan) {
+        return;
+    }
+
+    const frontier =
+        plan.chamberId !== undefined
+            ? frontierTiles(state.grid, state.nest, plan.chamberId)
+            : (() => {
+                  const tile = bootstrapFrontierTile(state.grid, state.nest, plan.near);
+                  return tile ? [tile] : [];
+              })();
+
+    const claimed = new Set(Object.values(plan.claims).map((t) => `${t.x},${t.y}`));
+
+    for (const tile of frontier) {
+        const key = `${tile.x},${tile.y}`;
+        ctx.fillStyle = claimed.has(key) ? FRONTIER_CLAIMED_COLOR : FRONTIER_COLOR;
+        ctx.fillRect(
+            tile.x * CELL_SIZE + FRONTIER_PADDING,
+            tile.y * CELL_SIZE + FRONTIER_PADDING,
+            CELL_SIZE - FRONTIER_PADDING * 2,
+            CELL_SIZE - FRONTIER_PADDING * 2,
+        );
     }
 }
 
@@ -186,6 +217,7 @@ function renderCorpses(ctx: CanvasRenderingContext2D, corpses: Corpse[]): void {
 
 export function renderNestView(ctx: CanvasRenderingContext2D, state: ColonyState): void {
     renderTiles(ctx, state.grid, state.nest);
+    renderDigFrontier(ctx, state);
     renderFoodGauge(ctx, state);
     renderBrood(ctx, state.brood);
     renderCorpses(ctx, state.corpses);

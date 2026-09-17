@@ -6,7 +6,7 @@
 import type { Ant } from "./ant";
 import type { Perception } from "./senses";
 import type { ChamberRole } from "../world/nest";
-import type { Position } from "../world/grid";
+import { manhattanDistance, type Position } from "../world/grid";
 import { decideForager } from "./foraging";
 import { decideUndertaker } from "./undertaking";
 import { decideNurse } from "./nursing";
@@ -20,10 +20,10 @@ export type Action =
     | { type: "eatFromPile" }
     | { type: "mill" }
     | { type: "crossExit" }
-    | { type: "pickUpFood" }
+    | { type: "pickUpFood"; source: "trail" | "memory" | "patch" | "visible" }
     | { type: "depositFood" }
-    | { type: "surfaceStep"; target: Position }
-    | { type: "surfaceRoute"; target: Position }
+    | { type: "surfaceStep"; target: Position; source?: "trail" | "memory" | "patch" }
+    | { type: "surfaceRoute"; target: Position; source?: "trail" | "memory" | "patch" }
     | { type: "noteBarrenPatch"; target: Position; patchIndex: number }
     | { type: "surfaceWander" }
     | { type: "moveToNestPoint"; target: Position }
@@ -32,8 +32,22 @@ export type Action =
     | { type: "clearUndertaking" }
     | { type: "tendBrood" }
     | { type: "feedQueen" }
+    | { type: "dig" }
+    | { type: "clearDigging" }
     | {type: "sleep" }
     | {type: "flee" };
+
+function decideDigger(ant: Ant, perception: Perception): Action {
+    if (perception.diggingTarget === undefined) {
+        return { type: "clearDigging" };
+    }
+
+    if (manhattanDistance(ant.location.pos, perception.diggingTarget) <= 1) {
+        return { type: "dig" };
+    }
+
+    return { type: "moveToNestPoint", target: perception.diggingTarget };
+}
 
 export function isSleepy(ant: Ant): boolean {
     // ticksAwake alone, NOT (ticksAwake + sleepPhase): sleepPhase already did
@@ -59,7 +73,9 @@ export function decide(ant: Ant, perception: Perception): Action {
     // panic reaches ants that never saw the predator themselves.
     if (
         perception.where === "surface" &&
-        (perception.predatorVisible || perception.beingChased || perception.alarmLevel > ALARM_FLEE_THRESHOLD)
+        (perception.predatorVisible ||
+            perception.beingChased ||
+            perception.alarmLevel > ALARM_FLEE_THRESHOLD * ant.memory.learning.fleeSensitivity)
     ) {
         return perception.atHole ? { type: "crossExit" } : { type: "flee" };
     }
@@ -114,7 +130,16 @@ export function decide(ant: Ant, perception: Perception): Action {
         return decideUndertaker(perception);
     }
 
-    // Rule 5: hand off to the job-specific state machine. One file each:
+    // Rule 5: digging is the same shape of override, colony-decision
+    // triggered rather than a standing third Job — assignDiggers (mutually
+    // exclusive with assignUndertakers) is the only thing that ever sets
+    // ant.digging, same as assignUndertakers is the only setter of
+    // ant.undertaking.
+    if (ant.digging) {
+        return decideDigger(ant, perception);
+    }
+
+    // Rule 6: hand off to the job-specific state machine. One file each:
     // nursing.ts (ferry eggs + tend brood), foraging.ts (the surface round
     // trip). Workers are only ever NURSE or FORAGER, so the final branch is
     // exhaustive; the mill fallback is just a total-function guard.

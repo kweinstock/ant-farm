@@ -73,14 +73,17 @@ import { act } from "./ants/jobs";
 import { tickQueen } from "./colony/queen";
 import { advanceBrood, type BroodLostEvent } from "./colony/brood";
 import { reassignJobs } from "./colony/workforce";
+import { spreadKnowledge } from "./colony/knowledge";
+import { evaluateDecisions } from "./colony/decisions";
+import { assignDiggers } from "./colony/digging";
 import { spawnFoodPiles, ageFoodPiles, inGraveyard } from "./world/surface";
 import { createCorpse, ageCorpses, assignUndertakers } from "./corpses";
 import { evaporate } from "./pheromones";
 import { rng } from "./rng";
 import type { ColonyState } from "./state";
 import type { AntId } from "./ants/ant";
-import type { Position } from "./world/grid";
-import { SURFACE_DEATH_CHANCE, WANDER_EXPOSURE, RAIN_EXPOSURE_MULT, WIND_EXPOSURE_MULT, RAIN_EVAPORATION_FACTOR, PREDATOR_STRIKE_CHANCE, ALARM_EVAPORATION_FACTOR } from "./params";
+import { manhattanDistance, type Position } from "./world/grid";
+import { SURFACE_DEATH_CHANCE, WANDER_EXPOSURE, RAIN_EXPOSURE_MULT, WIND_EXPOSURE_MULT, RAIN_EVAPORATION_FACTOR, PREDATOR_STRIKE_CHANCE, ALARM_EVAPORATION_FACTOR, GRAVEYARD_THREAT_RADIUS, GRAVEYARD_THREAT_INCREMENT, GRAVEYARD_THREAT_DECAY, GRAVEYARD_THREAT_CAP } from "./params";
 import { seasonOf } from "./environment/season";
 import { timeOfDay, dayOfYear, phaseOfDay } from "./environment/clock";
 import { ambientTemp, tempAtDepth } from "./environment/temperature";
@@ -192,6 +195,14 @@ function singleTick(state: ColonyState): TickResult {
         rngSeed: undertakerAssignment.rngSeed,
     };
 
+    const diggerAssignment = assignDiggers(currentState);
+    currentState = {
+        ...currentState,
+        ants: diggerAssignment.ants,
+        pendingDigPlan: diggerAssignment.pendingDigPlan,
+        rngSeed: diggerAssignment.rngSeed,
+    };
+
     const workers = Array.from(currentState.ants.values())
         .filter((ant) => ant.caste === "WORKER")
         .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
@@ -298,6 +309,9 @@ function singleTick(state: ColonyState): TickResult {
             surface: actResult.surface,
             corpses: actResult.corpses,
             rngSeed: actResult.rngSeed,
+            grid: actResult.grid ?? currentState.grid,
+            nest: actResult.nest ?? currentState.nest,
+            pendingDigPlan: actResult.pendingDigPlan === undefined ? currentState.pendingDigPlan : actResult.pendingDigPlan ?? undefined,
         };
     }
 
@@ -358,6 +372,14 @@ function singleTick(state: ColonyState): TickResult {
     // youngest-first from the nest-side workers. Runs after births so this
     // tick's new adults are counted.
     currentState = { ...currentState, ants: reassignJobs(currentState) };
+
+    const knowlegeResult = spreadKnowledge(currentState);
+    currentState = {...currentState, ants: knowlegeResult.ants, rngSeed: knowlegeResult.rngSeed};
+
+    const decisionPatch = evaluateDecisions(currentState);
+    if (decisionPatch !== undefined) {
+        currentState = { ...currentState, ...decisionPatch };
+    }
 
     const spawnResult = spawnFoodPiles(currentState.surface, currentState.rngSeed, currentState.env.season);
     const surfaceAfterSpawn = ageFoodPiles(spawnResult.surface);
@@ -432,8 +454,8 @@ function advanceEnvironment(state: ColonyState): { state: ColonyState; events: S
         { bodyCount: graveyardBodyCount, centre: graveyardCentre },
         weatherStep.seed,
     );
-
     let predator = predatorStep.predator;
+
     if (ov?.predatorAlways && predator === undefined) {
         const width = state.surface.grid.width;
         const height = state.surface.grid.height;
@@ -458,6 +480,12 @@ function advanceEnvironment(state: ColonyState): { state: ColonyState; events: S
         if (predatorStep.left) events.push({kind: "predatorLeft"});
     }
 
+    const graveyardThreatNow =
+        predator !== undefined && manhattanDistance(predator.pos, graveyardCentre) <= GRAVEYARD_THREAT_RADIUS;
+    const graveyardThreat = graveyardThreatNow
+        ? Math.min(GRAVEYARD_THREAT_CAP, state.env.graveyardThreat + GRAVEYARD_THREAT_INCREMENT)
+        : Math.floor(state.env.graveyardThreat * GRAVEYARD_THREAT_DECAY);
+
     const env: EnvState = {
         timeOfDay: tod,
         dayOfYear: doy,
@@ -466,6 +494,7 @@ function advanceEnvironment(state: ColonyState): { state: ColonyState; events: S
         ambientTemp: ambientTemp(season, tod, weather.kind),
         weather,
         predator: predator ?? null,
+        graveyardThreat,
     };
 
     return { state: { ...state, env, rngSeed: predatorStep.seed, simTime }, events };

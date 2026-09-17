@@ -9,7 +9,7 @@
 // chamber-to-chamber adjacency graph (the roadmap mentions one); the
 // per-chamber distance fields cover routing this phase.
 import { GRID_HEIGHT, GRID_WIDTH } from "../params";
-import { createGrid, distanceField, fieldToTile, getIndex, setTile, TILE, UNREACHABLE_DISTANCE, type Grid, type Position } from "./grid";
+import { createGrid, distanceField, fieldToTile, getIndex, getNeighbors, setTile, tileAt, TILE, UNREACHABLE_DISTANCE, type Grid, type Position, manhattanDistance } from "./grid";
 
 // Re-exported for backward compatibility — anything still importing these
 // from "./nest" (their original home before Phase 7 moved them to
@@ -42,6 +42,14 @@ type Rect = {
 type ChamberDef = {
     role: Exclude<ChamberRole, "EXIT">;
     rect: Rect;
+};
+
+export type NewChamberSpec = {
+    // QUEEN excluded alongside EXIT: she's never moved, and no dig plan
+    // should ever be able to type-check its way into building her a second
+    // chamber (see colony/decisions.ts's DigPlan.role for the matching
+    // exclusion on the proposal side).
+    role: Exclude<ChamberRole, "EXIT" | "QUEEN">;
 };
 
 // Symmetric excavated nest built around one central trunk. The entrance
@@ -138,6 +146,14 @@ function shaftMouth(tiles: Position[]): Position {
     return mouth;
 }
 
+function chamberSeedTiles(chamber: Chamber): Position[] {
+    return chamber.role === "EXIT" ? [shaftMouth(chamber.tiles)] : chamber.tiles;
+}
+
+function buildChamberField(grid: Grid, chamber: Chamber): Int16Array {
+    return distanceField(grid, chamberSeedTiles(chamber));
+}
+
 // The one tile foraging.ts's crossExit checks against — not "somewhere in
 // the EXIT chamber," but specifically the top of the shaft, since that's
 // the tile the EXIT distance field now seeds from (see the special case in
@@ -216,13 +232,7 @@ export function createStarterNest(width: number, height: number): { grid: Grid; 
 
     const distanceFields = {} as Record<ChamberId, Int16Array>;
     for (const chamber of chambers) {
-        // EXIT is still the one deliberate special case — see the original
-        // note: it seeds from shaftMouth only, not all its tiles, so a
-        // descending forager lands on exactly the tile crossExit checks.
-        // Now one BFS per chamber INSTANCE rather than per role — a nest
-        // with 3 nurseries runs 3 independent BFS passes, not 1.
-        const seedTiles = chamber.role === "EXIT" ? [shaftMouth(chamber.tiles)] : chamber.tiles;
-        distanceFields[chamber.id] = distanceField(grid, seedTiles);
+        distanceFields[chamber.id] = buildChamberField(grid, chamber);
     }
 
     return {grid, nest: {chambers, distanceFields, tileChamber}};
@@ -290,4 +300,81 @@ export function nearestChamberField(nest: Nest, role: ChamberRole, fromPos: Posi
     }
 
     return best ? nest.distanceFields[best.id] : undefined;
+}
+
+export function digTile(grid: Grid, nest: Nest, pos: Position, target: ChamberId | NewChamberSpec): { grid: Grid; nest: Nest } {
+
+    const tiles = new Uint8Array(grid.tiles);
+    tiles[getIndex(grid, pos.x, pos.y)] = TILE.CHAMBER;
+    const newGrid: Grid = { ...grid, tiles };
+
+    const isNewChamber = typeof target !== "string";
+    const chamberId = isNewChamber ? nextChamberIdForRole(nest, target.role) : target;
+
+
+    const chambers = isNewChamber
+        ? [...nest.chambers, { id: chamberId, role: target.role, tiles: [pos] }]
+        : nest.chambers.map((chamber) =>
+              chamber.id === chamberId ? { ...chamber, tiles: [...chamber.tiles, pos] } : chamber,
+          );
+
+
+    const tileChamber = [...nest.tileChamber];
+    tileChamber[getIndex(newGrid, pos.x, pos.y)] = chamberId;
+
+
+    const updatedChamber = chambers.find((chamber) => chamber.id === chamberId)!;
+    const distanceFields: Record<ChamberId, Int16Array> = {
+        ...nest.distanceFields,
+        [chamberId]: buildChamberField(newGrid, updatedChamber),
+    };
+
+    return { grid: newGrid, nest: { chambers, distanceFields, tileChamber } };
+}
+
+function nextChamberIdForRole(nest: Nest, role: ChamberRole): ChamberId {
+    // Mirrors createStarterNest's own nextChamberId counter (`${role}-${n}`,
+    // strictly increasing per role) — safe to derive from a plain count
+    // here since chambers are never removed once dug.
+    const count = nest.chambers.filter((chamber) => chamber.role === role).length;
+    return `${role}-${count}`;
+}
+
+export function frontierTiles(grid: Grid, nest: Nest, chamberId: ChamberId): Position[] {
+    const chamber = nest.chambers.find((c) => c.id === chamberId);
+    if (!chamber || chamber.role === "QUEEN") return [];
+
+    const seen = new Set<string>();
+    const frontier: Position[] = [];
+
+    for (const tile of chamber.tiles) {
+        for (const neighbor of getNeighbors(grid, tile.x, tile.y)) {
+            const key = `${neighbor.x},${neighbor.y}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+
+            if (tileAt(grid, neighbor.x, neighbor.y) !== TILE.SOIL) continue;
+            frontier.push(neighbor);
+        }
+    }
+
+    return frontier;
+}
+
+export function bootstrapFrontierTile(grid: Grid, nest: Nest, near: Position): Position | undefined {
+    let best: Position | undefined;
+    let bestDistance = Infinity;
+
+    for (const chamber of nest.chambers) {
+        if (chamber.role === "QUEEN" || chamber.role === "EXIT") continue;
+        for (const tile of frontierTiles(grid, nest, chamber.id)) {
+            const distance = manhattanDistance(tile, near);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = tile;
+            }
+        }
+    }
+
+    return best;
 }

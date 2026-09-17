@@ -136,7 +136,13 @@ export function assignUndertakers(state: ColonyState): { ants: Map<AntId, Ant>; 
     }
 
     const candidates = workers
-        .filter((ant) => ant.carrying.length === 0 && ant.carryingFood === 0 && ant.undertaking === undefined)
+        .filter(
+            (ant) =>
+                ant.carrying.length === 0 &&
+                ant.carryingFood === 0 &&
+                ant.undertaking === undefined &&
+                ant.digging === undefined,
+        )
         .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
     // Rebuild the pool before EVERY pick, targeting each remaining candidate

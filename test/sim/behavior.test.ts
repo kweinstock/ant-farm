@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Ant } from "../../src/sim/ants/ant";
 import type { Perception } from "../../src/sim/ants/senses";
 import { decide } from "../../src/sim/ants/behavior";
+import { emptyMemory } from "../../src/sim/ants/memory";
 
 // Hand-built, not derived from createInitialState — decide() / decideForager()
 // are pure (ant + perception in, one Action out), so no real ColonyState,
@@ -15,6 +16,7 @@ function makeAnt(overrides: Partial<Ant> = {}): Ant {
         job: "FORAGER",
         carrying: [],
         carryingFood: 0,
+        memory: emptyMemory(),
         location: { where: "nest", pos: { x: 0, y: 0 } },
         energy: 1200,
         ageTicks: 200,
@@ -135,6 +137,7 @@ describe("decide — forager round trip (handoff to decideForager)", () => {
         const perception = makePerception({ where: "surface", currentChamber: undefined, onFoodPileId: "pile-3" });
         expect(decide(makeAnt({ location: { where: "surface", pos: { x: 5, y: 5 } } }), perception)).toEqual({
             type: "pickUpFood",
+            source: "visible",
         });
     });
 

@@ -34,7 +34,7 @@ export type FoodPile = {
     ageTicks: number;
 };
 
-type Rect = {
+export type Rect = {
     x0: number;
     y0: number;
     x1: number;
@@ -52,7 +52,7 @@ export type Surface = {
     alarm: TrailField;
 };
 
-function inRect(pos: Position, rect: Rect): boolean {
+export function inRect(pos: Position, rect: Rect): boolean {
     return pos.x >= rect.x0 && pos.x <= rect.x1 && pos.y >= rect.y0 && pos.y <= rect.y1;
 }
 

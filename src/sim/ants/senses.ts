@@ -21,6 +21,7 @@ export type Perception = {
     where: "nest" | "surface";
     currentChamber: ChamberRole | undefined;
     currentChamberId: ChamberId | undefined;
+    diggingTarget: Position | undefined;
     queenEggPos: Position | undefined;
     nurseryPlacementPos: Position | undefined;
     broodNeedingTendPos: Position | undefined;
@@ -62,6 +63,11 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
 
     const currentChamber = where === "nest" ? chamberAt(state.nest, pos) : undefined;
     const currentChamberId = where === "nest" ? chamberIdAt(state.nest, pos) : undefined;
+
+    const diggingTarget =
+        ant.digging !== undefined && state.pendingDigPlan?.id === ant.digging.planId
+            ? state.pendingDigPlan.claims[ant.id]
+            : undefined;
 
     // Nearest uncarried egg still in a QUEEN chamber — the tile a fetching
     // nurse walks onto before pickUpEgg fires. (In practice every egg sits on
@@ -320,6 +326,7 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
         where,
         currentChamber,
         currentChamberId,
+        diggingTarget,
         queenEggPos,
         nurseryPlacementPos,
         broodNeedingTendPos,

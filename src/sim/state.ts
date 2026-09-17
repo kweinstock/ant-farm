@@ -22,6 +22,7 @@ import { initialWeather } from "./environment/weather";
 import type { Predator } from "./environment/hazards";
 import { ambientTemp } from "./environment/temperature";
 import type { WeatherKind } from "./environment/weather";
+import type { DigPlan } from "./colony/decisions";
 
 export type EnvState = {
     timeOfDay: TimeOfDay;
@@ -31,6 +32,7 @@ export type EnvState = {
     ambientTemp: number;
     weather: WeatherState;
     predator: Predator | null;
+    graveyardThreat: number;
 };
 
 // Test/debug scaffolding, NOT a normal gameplay path. When present on
@@ -63,6 +65,7 @@ export type ColonyState = {
     nextCorpseId: number;
     foodStore: { amount: number; capacity: number };
     climateOverride?: ClimateOverride;
+    pendingDigPlan?: DigPlan;
 };
 
 function chamberCenter(chamber: Chamber): Position {
@@ -120,6 +123,7 @@ export function createInitialState(seed: number, climateOverride?: ClimateOverri
         ambientTemp: ambientTemp(season, timeOfDay(simTime), weather.kind),
         weather,
         predator: null,
+        graveyardThreat: 0,
     };
 
     return {

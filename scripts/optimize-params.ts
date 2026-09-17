@@ -154,6 +154,43 @@ const SEARCH_SPACE: ParamSpec[] = [
     { name: "ALARM_SPREAD_FRAC", min: 0.1, max: 0.9 },
     { name: "ALARM_FLEE_THRESHOLD", min: 5, max: 100, integer: true },
     { name: "MAX_PILES", min: 10, max: 150, integer: true },
+
+    // ---- foraging memory ----
+    { name: "FORAGING_TRIP_FAILURE_TICKS", min: 50, max: 400, integer: true },
+    { name: "MAX_REMEMBERED", min: 1, max: 10, integer: true },
+    { name: "MEMORY_TTL_TICKS", min: 50, max: 1000, integer: true },
+    { name: "EMPTY_PATCH_TTL_TICKS", min: 50, max: 800, integer: true },
+    { name: "MAX_EMPTY_PATCHES_REMEMBERED", min: 1, max: 20, integer: true },
+
+    // ---- teaching & learned trust ----
+    { name: "PATCH_QUALITY_EMA_ALPHA", min: 0.05, max: 0.9 },
+    { name: "MAX_PREDATOR_SIGHTINGS", min: 1, max: 15, integer: true },
+    { name: "PREDATOR_SIGHTING_TTL_TICKS", min: 100, max: 1500, integer: true },
+    { name: "PATCH_QUALITY_RICHNESS_WEIGHT", min: 0.1, max: 5 },
+    { name: "PREDATOR_SIGHTING_RICHNESS_WEIGHT", min: 0.1, max: 5 },
+    { name: "ABSORB_MAX_TRANSFER", min: 1, max: 6, integer: true },
+    // Disjoint by construction (LEARNING_MIN max < LEARNING_BASELINE min <
+    // LEARNING_BASELINE max < LEARNING_MAX min), same trick MIN_TRAIL/
+    // MAX_TRAIL use above — otherwise crossover/mutation could produce a
+    // genome where reinforce()'s clamp(value, LEARNING_MIN, LEARNING_MAX)
+    // is nonsensical because LEARNING_MIN >= LEARNING_MAX.
+    { name: "LEARNING_MIN", min: 0.05, max: 0.4 },
+    { name: "LEARNING_BASELINE", min: 0.6, max: 1.4 },
+    { name: "LEARNING_MAX", min: 1.6, max: 5 },
+    { name: "REINFORCE_STEP", min: 0.01, max: 0.5 },
+    { name: "KNOWLEDGE_SHARE_CHANCE", min: 0.01, max: 0.6 },
+
+    // ---- colony-level decisions ----
+    { name: "DECISION_INTERVAL_TICKS", min: 100, max: 1000, integer: true },
+    { name: "DECISION_THRESHOLD", min: 0.3, max: 0.95 },
+    { name: "GRAVEYARD_THREAT_RADIUS", min: 5, max: 30, integer: true },
+    { name: "GRAVEYARD_THREAT_INCREMENT", min: 1, max: 5, integer: true },
+    { name: "GRAVEYARD_THREAT_DECAY", min: 0.9, max: 0.999 },
+    { name: "GRAVEYARD_THREAT_CAP", min: 50, max: 400, integer: true },
+    { name: "NURSERY_COLD_TEMP", min: 0, max: 15, integer: true },
+    { name: "NURSERY_COLD_SCALE", min: 2, max: 30, integer: true },
+    { name: "FOOD_STORE_TRAVEL_THRESHOLD", min: 10, max: 70, integer: true },
+    { name: "FOOD_STORE_TRAVEL_SCALE", min: 5, max: 50, integer: true },
 ];
 
 if (ARGS.has("help")) {

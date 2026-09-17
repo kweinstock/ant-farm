@@ -19,17 +19,20 @@
 import type { Ant, AntLocation, Job } from "./ant";
 import type { Action } from "./behavior";
 import { wander, moveToward } from "./movement";
-import { exitMouth, nearestChamberField } from "../world/nest";
+import { exitMouth, nearestChamberField, digTile, chamberIdAt } from "../world/nest";
+import type { Grid } from "../world/grid";
+import type { Nest } from "../world/nest";
 import type { ColonyState } from "../state";
 import type { Brood } from "../colony/brood";
 import type { Surface } from "../world/surface";
 import type { Corpse } from "../corpses";
+import type { DigPlan } from "../colony/decisions";
 import { eatFromStore } from "../world/resources";
 import { pickUpFood, depositFood, eatFromPile, surfaceStep, surfaceRoute, surfaceWander, noteBarrenPatch } from "./foraging";
 import { moveToNestPoint, pickUpCorpse, dropCorpse, clearUndertaking } from "./undertaking";
 import { pickUpEgg, placeEgg, tendBrood } from "./nursing";
 import { flee } from "./fleeing";
-import { MAX_ENERGY, NURSE_AGE_THRESHOLD_TICKS, SLEEP_CYCLE_TICKS, SLEEP_DURATION_TICKS, SLEEP_DEBT_MAX } from "../params";
+import { MAX_ENERGY, NURSE_AGE_THRESHOLD_TICKS, SLEEP_CYCLE_TICKS, SLEEP_DURATION_TICKS, SLEEP_DEBT_MAX, DIG_PROGRESS_TICKS, DIG_PLAN_TARGET_TILES } from "../params";
 
 export type ActResult = {
     ant: Ant;
@@ -39,6 +42,9 @@ export type ActResult = {
     surface: Surface;
     corpses: Corpse[];
     rngSeed: number;
+    grid?: Grid;
+    nest?: Nest;
+    pendingDigPlan?: DigPlan | null;
 };
 
 function syncCarriedCorpse(corpses: Corpse[], antId: string, newLocation: AntLocation): Corpse[] {
@@ -146,13 +152,28 @@ export function act(state: ColonyState, ant: Ant, action: Action): ActResult {
             return tendBrood(state, ant);
 
         case "crossExit": {
-            const location: AntLocation =
-                ant.location.where === "nest"
-                    ? { where: "surface", pos: state.surface.holePos }
-                    : { where: "nest", pos: exitMouth(state.nest) };
+            const enteringSurface = ant.location.where === "nest";
+            const location: AntLocation = enteringSurface
+                ? { where: "surface", pos: state.surface.holePos }
+                : { where: "nest", pos: exitMouth(state.nest) };
+
+            // A fresh outbound forage departure (not an undertaker heading
+            // out to the graveyard) clears any tripSource/tripStartTick left
+            // over from an ABANDONED trip — one that went home hungry/
+            // sleepy/fleeing without ever carrying food, so depositFood
+            // never ran to clear them (that's the only other place these
+            // reset). Bug found in review: without this, a forager's first
+            // abandoned trip permanently froze tripStartTick at that old
+            // tick — every later trip's length (state.simTime -
+            // tripStartTick) then reads as enormous from the moment it next
+            // tags a route, so depositFood judges it a "failure" almost
+            // immediately, forever, regardless of how well the ant is
+            // actually doing.
+            const freshDeparture = enteringSurface && ant.carryingFood === 0 && ant.undertaking === undefined;
+            const ant2 = freshDeparture ? { ...ant, tripSource: undefined, tripStartTick: undefined } : ant;
 
             return {
-                ant: { ...ant, location },
+                ant: { ...ant2, location },
                 brood: state.brood,
                 foodStore: state.foodStore,
                 surface: state.surface,
@@ -162,7 +183,7 @@ export function act(state: ColonyState, ant: Ant, action: Action): ActResult {
         }
 
         case "pickUpFood":
-            return pickUpFood(state, ant);
+            return pickUpFood(state, ant, action.source);
 
         case "depositFood":
             return depositFood(state, ant);
@@ -171,10 +192,10 @@ export function act(state: ColonyState, ant: Ant, action: Action): ActResult {
             return eatFromPile(state, ant);
 
         case "surfaceStep":
-            return surfaceStep(state, ant, action.target);
+            return surfaceStep(state, ant, action.target, action.source);
 
         case "surfaceRoute":
-            return surfaceRoute(state, ant, action.target);
+            return surfaceRoute(state, ant, action.target, action.source);
 
         case "noteBarrenPatch":
             return noteBarrenPatch(state, ant, action.target, action.patchIndex);
@@ -215,6 +236,79 @@ export function act(state: ColonyState, ant: Ant, action: Action): ActResult {
 
         case "flee":
             return flee(state, ant);
+
+        case "clearDigging":
+            return {
+                ant: { ...ant, digging: undefined },
+                brood: state.brood,
+                foodStore: state.foodStore,
+                surface: state.surface,
+                corpses: state.corpses,
+                rngSeed: state.rngSeed,
+            };
+
+        case "dig": {
+            const plan = state.pendingDigPlan;
+
+            if (!plan || ant.digging?.planId !== plan.id) {
+                return {
+                    ant: { ...ant, digging: undefined },
+                    brood: state.brood,
+                    foodStore: state.foodStore,
+                    surface: state.surface,
+                    corpses: state.corpses,
+                    rngSeed: state.rngSeed,
+                };
+            }
+
+            const tile = plan.claims[ant.id];
+            if (!tile) {
+                return {
+                    ant: { ...ant, digging: undefined },
+                    brood: state.brood,
+                    foodStore: state.foodStore,
+                    surface: state.surface,
+                    corpses: state.corpses,
+                    rngSeed: state.rngSeed,
+                };
+            }
+
+            const progress = (plan.progress[ant.id] ?? 0) + 1;
+
+            if (progress < DIG_PROGRESS_TICKS) {
+                return {
+                    ant,
+                    brood: state.brood,
+                    foodStore: state.foodStore,
+                    surface: state.surface,
+                    corpses: state.corpses,
+                    rngSeed: state.rngSeed,
+                    pendingDigPlan: { ...plan, progress: { ...plan.progress, [ant.id]: progress } },
+                };
+            }
+
+            const target = plan.chamberId ?? { role: plan.role };
+            const dug = digTile(state.grid, state.nest, tile, target);
+            const chamberId = plan.chamberId ?? chamberIdAt(dug.nest, tile)!;
+
+            const restClaims = Object.fromEntries(Object.entries(plan.claims).filter(([id]) => id !== ant.id));
+            const restProgress = Object.fromEntries(Object.entries(plan.progress).filter(([id]) => id !== ant.id));
+
+            const chamberSize = dug.nest.chambers.find((c) => c.id === chamberId)?.tiles.length ?? 0;
+            const planComplete = chamberSize >= DIG_PLAN_TARGET_TILES;
+
+            return {
+                ant: { ...ant, digging: undefined },
+                brood: state.brood,
+                foodStore: state.foodStore,
+                surface: state.surface,
+                corpses: state.corpses,
+                rngSeed: state.rngSeed,
+                grid: dug.grid,
+                nest: dug.nest,
+                pendingDigPlan: planComplete ? null : { ...plan, chamberId, claims: restClaims, progress: restProgress },
+            };
+        }
     }
 }
 

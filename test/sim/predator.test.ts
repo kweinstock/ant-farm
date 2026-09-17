@@ -10,6 +10,7 @@ import { decide } from "../../src/sim/ants/behavior";
 import { perceive } from "../../src/sim/ants/senses";
 import { flee } from "../../src/sim/ants/fleeing";
 import type { Ant } from "../../src/sim/ants/ant";
+import { emptyMemory } from "../../src/sim/ants/memory";
 import {
     SURFACE_WIDTH,
     SURFACE_HEIGHT,
@@ -157,7 +158,7 @@ function makeAnt(overrides: Partial<Ant> = {}): Ant {
         carrying: [],
         carryingFood: 0,
         undertaking: undefined,
-        memory: { foodSites: [], emptyPatches: [] },
+        memory: emptyMemory(),
         location: { where: "surface", pos: { x: 50, y: 50 } },
         energy: 1000,
         ageTicks: 300,

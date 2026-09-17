@@ -29,14 +29,24 @@ import type { Perception } from "./senses";
 import type { Action } from "./behavior";
 import { isSleepy } from "./behavior";
 import { wander, stepToward, surfaceRouteStep } from "./movement";
-import { takeFromPile } from "../world/surface";
+import { takeFromPile, type Surface } from "../world/surface";
 import { depositToStore } from "../world/resources";
 import { deposit } from "../pheromones";
-import { rememberFoodSite, rememberEmptyPatch } from "./memory";
-import { HUNGER_THRESHOLD, DEPOSIT_AMOUNT, FORAGER_LOAD, EAT_AMOUNT, MAX_ENERGY } from "../params";
+import { rememberFoodSite, rememberEmptyPatch, updatePatchQuality, reinforce } from "./memory";
+import { HUNGER_THRESHOLD, DEPOSIT_AMOUNT, FORAGER_LOAD, EAT_AMOUNT, MAX_ENERGY, FORAGING_TRIP_FAILURE_TICKS } from "../params";
 import type { ColonyState } from "../state";
 import type { Position } from "../world/grid";
 import type { ActResult } from "./jobs";
+
+function patchIndexAt(surface: Surface, pos: Position): number | undefined {
+    for (let i = 0; i < surface.patches.length; i++) {
+        const p = surface.patches[i];
+        if (pos.x >= p.x0 && pos.x <= p.x1 && pos.y >= p.y0 && pos.y <= p.y1) {
+            return i;
+        }
+    }
+    return undefined;
+}
 
 export function decideForager(ant: Ant, perception: Perception): Action {
     if (perception.where === "nest") {
@@ -97,39 +107,56 @@ export function decideForager(ant: Ant, perception: Perception): Action {
     }
 
     if (perception.onFoodPileId !== undefined) {
-        return { type: "pickUpFood" };
+        return { type: "pickUpFood", source: "visible" };
     }
 
     if (perception.nearestFoodPilePos !== undefined) {
         return { type: "surfaceStep", target: perception.nearestFoodPilePos };
     }
 
+    const options: { source: "trail" | "memory" | "patch"; target: Position; trust: number }[] = [];
     if (perception.trailNeighbor !== undefined) {
-        return { type: "surfaceStep", target: perception.trailNeighbor };
+        options.push({ source: "trail", target: perception.trailNeighbor, trust: ant.memory.learning.trailTrust });
     }
 
     if (perception.rememberedFoodPos !== undefined) {
-        return { type: "surfaceStep", target: perception.rememberedFoodPos };
+        options.push({ source: "memory", target: perception.rememberedFoodPos, trust: ant.memory.learning.memoryTrust });
     }
 
     if (perception.nearestPatchTarget !== undefined) {
-        // Standing in a patch that turned out to be dry: bank that ("patch i
-        // is empty") so this ant explores elsewhere for a while, and head for
-        // the next patch in the same step.
-        if (perception.barrenPatchIndex !== undefined) {
+        options.push({ source: "patch", target: perception.nearestPatchTarget, trust: ant.memory.learning.patchTrust });
+    }
+
+    if (options.length > 0) {
+        const best = options.reduce((a, b) => (b.trust > a.trust ? b : a));
+
+        if (best.source === "patch" && perception.barrenPatchIndex !== undefined) {
             return {
                 type: "noteBarrenPatch",
-                target: perception.nearestPatchTarget,
+                target: best.target,
                 patchIndex: perception.barrenPatchIndex,
             };
         }
-        return { type: "surfaceRoute", target: perception.nearestPatchTarget };
+
+        return best.source === "patch"
+            ? { type: "surfaceRoute", target: best.target, source: "patch" }
+            : { type: "surfaceStep", target: best.target, source: best.source };
     }
 
     return { type: "surfaceWander" };
 }
 
-export function pickUpFood(state: ColonyState, ant: Ant): ActResult {
+// `_source` (from decideForager's `{ type: "pickUpFood", source: "visible" }`
+// — the only call site, always "visible") is NOT what feeds reinforcement.
+// Bug found in review: this used to write `tripSource: source` here, which
+// unconditionally clobbered the real attribution — "trail"/"memory"/"patch",
+// set on the ant back when surfaceStep/surfaceRoute routed it toward this
+// pile — with the literal string "visible" every single time food was
+// picked up, right before depositFood reads tripSource to decide what to
+// reinforce. Trust weights could never actually update. Leaving tripSource
+// out of this return lets it fall through the `...ant` spread untouched, so
+// whatever the approach tagged survives to depositFood.
+export function pickUpFood(state: ColonyState, ant: Ant, _source: "trail" | "memory" | "patch" | "visible"): ActResult {
     const pos = ant.location.pos;
     const pile = state.surface.foodPiles.find((p) => p.pos.x === pos.x && p.pos.y === pos.y);
 
@@ -139,7 +166,11 @@ export function pickUpFood(state: ColonyState, ant: Ant): ActResult {
 
     const { surface, taken } = takeFromPile(state.surface, pile.id, FORAGER_LOAD);
 
-    const memory = rememberFoodSite(ant.memory, pile.pos, state.simTime);
+    let memory = rememberFoodSite(ant.memory, pile.pos, state.simTime);
+    const patchIndex = patchIndexAt(state.surface, pile.pos);
+    if (patchIndex !== undefined) {
+        memory = updatePatchQuality(memory, patchIndex, taken);
+    }
 
     return {
         ant: { ...ant, carryingFood: taken, memory },
@@ -148,14 +179,22 @@ export function pickUpFood(state: ColonyState, ant: Ant): ActResult {
         surface,
         corpses: state.corpses,
         rngSeed: state.rngSeed,
-    };
+    }
 }
+  
 
 export function depositFood(state: ColonyState, ant: Ant): ActResult {
     const foodStore = depositToStore(state.foodStore, ant.carryingFood);
 
+    let memory = ant.memory;
+    if (ant.tripSource !== undefined) {
+        const tripLength = state.simTime - (ant.tripStartTick ?? state.simTime);
+        const outcome = tripLength > FORAGING_TRIP_FAILURE_TICKS ? "failure" : "success";
+        memory = { ...memory, learning: reinforce(memory.learning, ant.tripSource, outcome) };
+    }
+
     return {
-        ant: { ...ant, carryingFood: 0 },
+        ant: { ...ant, carryingFood: 0, memory, tripSource: undefined, tripStartTick: undefined },
         brood: state.brood,
         foodStore,
         surface: state.surface,
@@ -173,7 +212,11 @@ export function eatFromPile(state: ColonyState, ant: Ant): ActResult {
     }
 
     const { surface, taken } = takeFromPile(state.surface, pile.id, EAT_AMOUNT);
-    const memory = rememberFoodSite(ant.memory, pile.pos, state.simTime);
+    let memory = rememberFoodSite(ant.memory, pile.pos, state.simTime);
+    const patchIndex = patchIndexAt(state.surface, pile.pos);
+    if (patchIndex !== undefined) {
+        memory = updatePatchQuality(memory, patchIndex, taken);
+    }
 
     return {
         ant: { ...ant, energy: Math.min(ant.energy + taken, MAX_ENERGY), memory },
@@ -206,26 +249,32 @@ export function applySurfaceMove(state: ColonyState, ant: Ant, result: { positio
     };
 }
 
-export function surfaceStep(state: ColonyState, ant: Ant, target: Position): ActResult {
+export function surfaceStep(state: ColonyState, ant: Ant, target: Position, source?: "trail" | "memory" | "patch"): ActResult {
     const result = stepToward(state.surface.grid, ant.location.pos, target, state.rngSeed);
-    return applySurfaceMove(state, ant, result);
+    const tagged = source !== undefined
+        ? { ...ant, tripSource: source, tripStartTick: ant.tripStartTick ?? state.simTime }
+        : ant;
+    return applySurfaceMove(state, tagged, result);
 }
 
-export function surfaceRoute(state: ColonyState, ant: Ant, target: Position): ActResult {
+export function surfaceRoute(state: ColonyState, ant: Ant, target: Position, source?: "trail" | "memory" | "patch"): ActResult {
     const result = surfaceRouteStep(state.surface.grid, ant.location.pos, target, state.rngSeed);
-    return applySurfaceMove(state, ant, result);
+    const tagged = source !== undefined
+        ? { ...ant, tripSource: source, tripStartTick: ant.tripStartTick ?? state.simTime }
+        : ant;
+    return applySurfaceMove(state, tagged, result);
 }
 
 export function noteBarrenPatch(state: ColonyState, ant: Ant, target: Position, patchIndex: number): ActResult {
     const remembered: Ant = { ...ant, memory: rememberEmptyPatch(ant.memory, patchIndex, state.simTime) };
-    return surfaceRoute(state, remembered, target);
+    return surfaceRoute(state, remembered, target, "patch");
 }
 
 export function surfaceWander(state: ColonyState, ant: Ant): ActResult {
     const result = wander(state.surface.grid, ant.location.pos, state.rngSeed);
 
     return {
-        ant: { ...ant, location: { where: "surface", pos: result.position } },
+        ant: { ...ant, location: { where: "surface", pos: result.position }, tripSource: undefined },
         brood: state.brood,
         foodStore: state.foodStore,
         surface: state.surface,
