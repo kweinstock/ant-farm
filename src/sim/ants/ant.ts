@@ -35,6 +35,11 @@ export type Ant = {
     spookedUntil: number;
     tripSource?: "trail" | "memory" | "patch";
     tripStartTick?: number;
+    // Latches true once a nurse has placed at least one egg from its current
+    // carried load, and clears once that load is fully placed — see
+    // ants/nursing.ts's decideNurse for why this stops a nurse from
+    // abandoning a partial delivery to top up again mid-trip.
+    deliveringBrood?: boolean;
 };
 
 export function createWorker(id: AntId, position: Position, currentSeed: number): {ant: Ant; seed: number} {

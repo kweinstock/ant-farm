@@ -156,6 +156,14 @@ export function buildBroodProps(nestGrid: Grid, dims: CubeDims): BroodProps {
 
     const size = nestWorldPerTile(dims, nestGrid) * BROOD_SIZE_RATIO;
     const spreadUnit = size * 0.55;
+    // Growing the spiral by sqrt(i) with no ceiling looks fine for a normal
+    // handful of brood sharing a tile, but a backed-up queen chamber (eggs
+    // laid faster than nurses ferry them out) can pile up dozens on her one
+    // tile — that unbounded spiral pushes the outer decals well past the
+    // tile's own footprint and onto whatever's next to it, including undug
+    // SOIL, reading as "eggs spawning in soil". Cap the radius so a big pile
+    // stacks/overlaps instead of sprawling off the tile it's actually on.
+    const MAX_SPREAD = nestWorldPerTile(dims, nestGrid) * 0.4;
 
     function update(state: ColonyState): void {
         const groups = new Map<string, Brood[]>();
@@ -183,7 +191,7 @@ export function buildBroodProps(nestGrid: Grid, dims: CubeDims): BroodProps {
 
             group.forEach((entry, i) => {
                 const angle = i * 2.399963;
-                const spread = i === 0 ? 0 : spreadUnit + Math.sqrt(i) * spreadUnit * 1.4;
+                const spread = i === 0 ? 0 : Math.min(spreadUnit + Math.sqrt(i) * spreadUnit * 1.4, MAX_SPREAD);
                 const offsetX = Math.cos(angle) * spread;
                 const offsetY = Math.sin(angle) * spread;
 

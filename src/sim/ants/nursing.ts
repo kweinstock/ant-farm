@@ -40,8 +40,18 @@ export function decideNurse(ant: Ant, perception: Perception): Action {
             : { type: "moveToNestPoint", target: perception.broodUrgentTendPos };
     }
 
+    // Once a nurse has placed at least one egg from the current load,
+    // ant.deliveringBrood latches true (set in placeEgg below, cleared when
+    // the load is fully placed) — it commits to finishing the delivery
+    // before fetching again. Without this latch, placing one egg freed up a
+    // carry slot and immediately flipped canFetchMore back on (capacity +
+    // eggs still available), sending the nurse straight back to the queen
+    // instead of delivering the rest of what it was already carrying — the
+    // "places one egg then goes back for more" bug.
     const canFetchMore =
-        perception.carrying.length < NURSE_EGG_CAPACITY && perception.eggsAvailableInQueenChamber;
+        perception.carrying.length < NURSE_EGG_CAPACITY &&
+        perception.eggsAvailableInQueenChamber &&
+        !ant.deliveringBrood;
 
     // Carrying eggs and nothing left worth topping up with — deliver the load.
     if (perception.carrying.length > 0 && !canFetchMore) {
@@ -130,8 +140,12 @@ export function placeEgg(state: ColonyState, ant: Ant): ActResult {
             : entry,
     );
 
+    const remaining = ant.carrying.filter((id) => id !== eggId);
+
     return {
-        ant: { ...ant, carrying: ant.carrying.filter((id) => id !== eggId) },
+        // deliveringBrood latches true while there's more of this load left
+        // to place, and clears once the trip is done — see decideNurse.
+        ant: { ...ant, carrying: remaining, deliveringBrood: remaining.length > 0 ? true : undefined },
         brood,
         foodStore: state.foodStore,
         surface: state.surface,
