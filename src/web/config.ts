@@ -15,4 +15,3 @@ export const TICK_INTERVALS_MS = 200; // wall-clock ms between ticks when SOURCE
 // ---- Rendering ----
 export const CELL_SIZE = 14; // pixels per nest grid tile
 export const SURFACE_CELL_SIZE = 11; // pixels per surface grid tile (drawn smaller than the nest — the surface grid is larger)
-export const VIEW_LAYOUT: "split" | "nest" | "surface" = "split"; // default view mode on first load, before any stored preference in localStorage

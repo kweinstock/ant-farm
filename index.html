@@ -5,15 +5,28 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<meta name="description" content="Global Ant Farm - kweinstock.dev" />
 		<title>Global Ant Farm</title>
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<style>
+			/* PHASE 12f: the sim fills the whole viewport now — ui/control-panel.ts
+			   draws the title/branding as a corner overlay instead of a page <h1>,
+			   so there's no page chrome left to size around. This is the one
+			   page-shell rule that has to exist outside any component's own
+			   injected <style> (view-switch.ts etc.), since it has to apply before
+			   any of that JS runs. */
+			html, body {
+				margin: 0;
+				height: 100%;
+				overflow: hidden;
+				background: #1a140c;
+			}
+			#ant-farm-views {
+				width: 100vw;
+				height: 100vh;
+			}
+		</style>
 	</head>
 	<body>
-		<main id="app">
-			<h1>Global Ant Farm</h1>
-			<p>Currently in the testing phase (Not in testing currently)</p>
-
-			<div id="ant-farm-views"></div>
-
-		</main>
+		<div id="ant-farm-views"></div>
 		<script type="module" src="/src/web/main.ts"></script>
 	</body>
 </html>

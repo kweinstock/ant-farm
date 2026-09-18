@@ -1,42 +1,30 @@
-// Top-down foraging ground — reads state.surface (world/surface.ts) plus
-// state.corpses for anything that landed out here. Every ground tile is
-// uniform GROUND (createSurface fills the whole grid with it, and nothing
-// on the surface digs), so unlike nest-view.ts there's no per-tile
-// type/role lookup — one flat fill instead of a per-cell loop for the
-// ground itself, then (PHASE 4) the trail layer, the graveyard, food
-// piles, corpses, the hole, and ants filtered to where === "surface".
+// Top-down foraging ground — reads state.surface (world/surface.ts). Every
+// ground tile is uniform GROUND (createSurface fills the whole grid with
+// it, and nothing on the surface digs), so unlike nest-view.ts there's no
+// per-tile type/role lookup — one flat fill instead of a per-cell loop for
+// the ground itself, then (PHASE 4) the trail layer, the graveyard, and
+// the predator.
 import { inGraveyard } from "../../sim/world/surface";
-import { tileAt, TILE } from "../../sim/world/grid";
 import type { ColonyState } from "../../sim/state";
-import type { Corpse } from "../../sim/corpses";
-import type { AntId } from "../../sim/ants/ant";
-import type { RenderOptions } from "../ui/view-switch";
+import type { Season } from "../../sim/environment/season";
+import type { RenderOptions } from "../ui/control-panel";
 import { SURFACE_CELL_SIZE } from "../config";
-import { drawAnt, drawCorpse } from "./ants";
 import { renderTrail, renderAlarm } from "./pheromone-layer";
+import { buildGrassOverlayTile } from "./textures";
+import { SEASON_PALETTE } from "./season-palette";
 
-const GROUND_COLOR = "#c9b896";
-const PATCH_COLOR = "#7a9c4a";
-const ROCK_COLOR = "#7a7a72";
-const TREE_COLOR = "#3f6b35";
-const ROCK_RADIUS_RATIO = 0.32;
-const TREE_RADIUS_RATIO = 0.38;
-const HOLE_COLOR = "#1a1208";
-const HOLE_RADIUS_RATIO = 0.4;
 const GRAVEYARD_OUTLINE_COLOR = "rgba(0, 0, 0, 0.25)";
 const GRAVEYARD_FILL_RGB = "0, 0, 0";
-const PILE_COLOR = "#5c8a3a";
-const PILE_BASE_RADIUS_RATIO = 0.4;
-const PILE_MIN_SCALE = 0.25;
 const PREDATOR_COLOR = "#5c1a1a";
 const PREDATOR_OUTLINE_COLOR = "#1a0808";
 const PREDATOR_RADIUS_RATIO = 0.55;
 
-// Untuned, same spirit as this file's pile params — how many corpses in the
-// graveyard rect counts as "full" shading. CORPSE_DECAY_TICKS (corpses.ts,
-// 600 ticks) is generous enough that a busy colony's graveyard could
-// plausibly grow well past this before decay ever thins it out, so this is
-// a visual cap on the shading, not a claim about the rect's real capacity.
+// Untuned, same spirit as this file's other params — how many corpses in
+// the graveyard rect counts as "full" shading. CORPSE_DECAY_TICKS
+// (corpses.ts, 600 ticks) is generous enough that a busy colony's
+// graveyard could plausibly grow well past this before decay ever thins
+// it out, so this is a visual cap on the shading, not a claim about the
+// rect's real capacity.
 const GRAVEYARD_SHADE_FULL_COUNT = 15;
 const GRAVEYARD_MAX_FILL_ALPHA = 0.5;
 
@@ -50,53 +38,55 @@ function inAnyPatch(x: number, y: number, patches: { x0: number; y0: number; x1:
     return false;
 }
 
+// PHASE 12 (terrain texture pass, take 2): a blur+speckle-noise pass here
+// read as muddy rather than the flat, clean "paper" look Phase 12's art
+// direction actually wants — reverted to a flat fill (no blur, no scratch
+// canvas needed). The ground gets an actual grass-tuft overlay
+// (textures.ts) instead of generic noise — the one terrain surface Phase 12
+// asked for real added texture on — tiled at a fixed pixel size via
+// ctx.createPattern so tuft density stays constant regardless of grid size.
+//
+// PHASE 12e: one tile per season instead of one fixed green — all four
+// built once up front (cheap: a handful of curved strokes each) and picked
+// by state.env.season every frame, same "precompute the variants, pick one"
+// shape as props.ts's tree materials.
+const GRASS_TILE_BY_SEASON: Record<Season, HTMLCanvasElement> = Object.fromEntries(
+    (Object.keys(SEASON_PALETTE) as Season[]).map((season) => [
+        season,
+        buildGrassOverlayTile({ size: 28, tuftCount: 5, bladeColor: SEASON_PALETTE[season].grassBladeColor }),
+    ]),
+) as Record<Season, HTMLCanvasElement>;
+
 export function renderSurfaceView(ctx: CanvasRenderingContext2D, state: ColonyState, options: RenderOptions): void {
     const { surface } = state;
     const cellSize = SURFACE_CELL_SIZE;
+    const width = surface.grid.width * cellSize;
+    const height = surface.grid.height * cellSize;
+    const palette = SEASON_PALETTE[state.env.season];
 
+    // Rocks and trees are deliberately not drawn here — render/props.ts
+    // stands a real 3D placeholder prop on top of the cube's surface face
+    // for both instead of painting a flat circle into this texture (see
+    // that file's header for why), so this loop only needs patch vs. plain
+    // ground, not a per-tile type lookup.
     for (let y = 0; y < surface.grid.height; y++) {
         for (let x = 0; x < surface.grid.width; x++) {
-            const tile = tileAt(surface.grid, x, y);
             const px = x * cellSize;
             const py = y * cellSize;
 
-            ctx.fillStyle = inAnyPatch(x, y, surface.patches) ? PATCH_COLOR : GROUND_COLOR;
+            const inPatch = options.showPatches && inAnyPatch(x, y, surface.patches);
+            ctx.fillStyle = inPatch ? palette.patchColor : palette.groundColor;
             ctx.fillRect(px, py, cellSize, cellSize);
-
-            if (tile === TILE.ROCK) {
-                ctx.fillStyle = ROCK_COLOR;
-                ctx.beginPath();
-                ctx.arc(px + cellSize / 2, py + cellSize / 2, cellSize * ROCK_RADIUS_RATIO, 0, Math.PI * 2);
-                ctx.fill();
-            } else if (tile === TILE.TREE) {
-                ctx.fillStyle = TREE_COLOR;
-                ctx.beginPath();
-                ctx.arc(px + cellSize / 2, py + cellSize / 2, cellSize * TREE_RADIUS_RATIO, 0, Math.PI * 2);
-                ctx.fill();
-            }
         }
     }
 
-    // Faint grid lines, same treatment as nest-view.ts, so both panes read
-    // as one visual language.
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.1)";
-    ctx.lineWidth = 1;
-    for (let x = 0; x <= surface.grid.width; x++) {
-        const pixelX = x * cellSize;
-        ctx.beginPath();
-        ctx.moveTo(pixelX, 0);
-        ctx.lineTo(pixelX, surface.grid.height * cellSize);
-        ctx.stroke();
-    }
-    for (let y = 0; y <= surface.grid.height; y++) {
-        const pixelY = y * cellSize;
-        ctx.beginPath();
-        ctx.moveTo(0, pixelY);
-        ctx.lineTo(surface.grid.width * cellSize, pixelY);
-        ctx.stroke();
+    const grassPattern = ctx.createPattern(GRASS_TILE_BY_SEASON[state.env.season], "repeat");
+    if (grassPattern) {
+        ctx.fillStyle = grassPattern;
+        ctx.fillRect(0, 0, width, height);
     }
 
-    // PHASE 4: trail layer, right after grid lines and before anything
+    // PHASE 4: trail layer, right after the ground and before anything
     // else drawn on top — it needs to read as staining on the ground
     // itself, not a layer floating above piles/corpses/ants. Gated on the
     // visitor's toggle (ui/view-switch.ts); off by default.
@@ -131,42 +121,8 @@ export function renderSurfaceView(ctx: CanvasRenderingContext2D, state: ColonySt
     ctx.lineWidth = 2;
     ctx.strokeRect(gyX, gyY, gyWidth, gyHeight);
 
-    // Food piles: radius/opacity scale with how full the tile is against its
-    // own capacity — same shrink-as-depleted treatment Phase 3's fixed piles
-    // used.
-    for (const pile of surface.foodPiles) {
-        const fullness = pile.capacity > 0 ? Math.min(1, pile.amount / pile.capacity) : 0;
-        if (fullness <= 0) {
-            continue;
-        }
-
-        const scale = PILE_MIN_SCALE + (1 - PILE_MIN_SCALE) * fullness;
-        const radius = cellSize * PILE_BASE_RADIUS_RATIO * scale;
-        const centerX = pile.pos.x * cellSize + cellSize / 2;
-        const centerY = pile.pos.y * cellSize + cellSize / 2;
-
-        ctx.globalAlpha = 0.35 + 0.65 * fullness;
-        ctx.fillStyle = PILE_COLOR;
-        ctx.beginPath();
-        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.globalAlpha = 1;
-    }
-
-    // Corpses: same stacked-tile spiral as nest-view.ts's renderCorpses.
-    // Bodies spread across the graveyard's tiles now (world/surface.ts's
-    // graveyardSlot, ~CORPSE_PER_GRAVE_TILE each), but a busy colony still
-    // overfills them past that, so the per-tile spiral keeps a deep pile
-    // legible instead of one opaque blob.
-    renderCorpses(ctx, state.corpses, cellSize);
-
-    // The hole — the one tile a forager actually crosses through.
-    const holeX = surface.holePos.x * cellSize + cellSize / 2;
-    const holeY = surface.holePos.y * cellSize + cellSize / 2;
-    ctx.fillStyle = HOLE_COLOR;
-    ctx.beginPath();
-    ctx.arc(holeX, holeY, cellSize * HOLE_RADIUS_RATIO, 0, Math.PI * 2);
-    ctx.fill();
+    // The hole itself is render/props.ts's entrance mound now — a real 3D
+    // prop instead of a flat dark circle painted into this texture.
 
     if (state.env.predator) {
         const px = state.env.predator.pos.x * cellSize + cellSize / 2;
@@ -180,41 +136,7 @@ export function renderSurfaceView(ctx: CanvasRenderingContext2D, state: ColonySt
         ctx.stroke();
     }
 
-    // Corpse-carriers, built once per frame — see ants.ts's comment on why
-    // the carry-dot tracks carriedBy, not ant.undertaking.
-    const corpseCarriers = new Set<AntId>(
-        state.corpses.filter((corpse) => corpse.carriedBy !== undefined).map((corpse) => corpse.carriedBy as AntId)
-    );
-
-    for (const ant of state.ants.values()) {
-        if (ant.location.where === "surface") {
-            drawAnt(ctx, ant, cellSize, corpseCarriers.has(ant.id));
-        }
-    }
-}
-
-function renderCorpses(ctx: CanvasRenderingContext2D, corpses: Corpse[], cellSize: number): void {
-    const groups = new Map<string, Corpse[]>();
-    for (const corpse of corpses) {
-        if (corpse.carriedBy !== undefined || corpse.location.where !== "surface") {
-            continue;
-        }
-        const key = `${corpse.location.pos.x},${corpse.location.pos.y}`;
-        const group = groups.get(key);
-        if (group) {
-            group.push(corpse);
-        } else {
-            groups.set(key, [corpse]);
-        }
-    }
-
-    for (const group of groups.values()) {
-        group.forEach((corpse, i) => {
-            const angle = i * 2.399963;
-            const spread = i === 0 ? 0 : cellSize * 0.12 + Math.sqrt(i) * cellSize * 0.1;
-            const dx = Math.cos(angle) * spread;
-            const dy = Math.sin(angle) * spread;
-            drawCorpse(ctx, corpse, cellSize, { dx, dy });
-        });
-    }
+    // Ants, food piles, and corpses are all drawn as real 3D decals
+    // standing/lying on the cube now, not painted into this texture — see
+    // render/ant-props.ts, render/food-props.ts, render/corpse-props.ts.
 }

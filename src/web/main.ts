@@ -14,25 +14,39 @@
 // same "own it in one place, thread it through" pattern as everything else
 // here.
 //
+// PHASE 12a/b: mountViews now hands back a sceneContainer (render/engine.ts's
+// three.js cube lives there, not two flat canvases). This file also now
+// tracks prevState + tickStartTime alongside state itself, purely so
+// render/engine.ts can interpolate ant motion between ticks
+// (state/interpolate.ts) — prevState is whatever `state` was immediately
+// before the current setInterval callback's tick, tickStartTime is when
+// that callback finished.
+//
 // PHASE 5: local mode used to throw away step()'s events entirely. Now
 // every tick's events feed a TuningStats accumulator (below), which
-// ui/weather-hud.ts's dashboard reads for cumulative/windowed readouts state alone can't
-// give it (deaths by cause, food delivered per trip, etc). TuningStats is
-// plain mutable UI-side scratch state — never part of ColonyState, never
+// ui/dashboard-stats.ts reads for cumulative/windowed readouts state alone
+// can't give it (deaths by cause, food delivered per trip, etc). TuningStats
+// is plain mutable UI-side scratch state — never part of ColonyState, never
 // replayed — so it's intentionally NOT held to the sim's pure-copy-modify
 // discipline. NOTE for later: demography.ts's header already says it
 // "feeds Stats DTO" — Phase 6 may promote some of this into the sim/DO
 // properly; for now it's client-side only, rebuilt fresh on every page load.
+//
+// PHASE 12f: the one-off "Fast-forward" button (20 ticks/interval) that
+// used to live here is gone — it was explicitly marked TEMPORARY, and the
+// panel-system rework was the agreed point to actually remove it rather
+// than migrate it into ui/control-panel.ts's dock.
 import { createInitialState } from "../sim/state";
 import { step } from "../sim";
 import type { ColonyState } from "../sim/state";
 import type { AntId } from "../sim/ants/ant";
 import type { SimEvent, DeathEvent } from "../sim";
 import { getDemography } from "../sim/colony/demography";
+import type { FrameSource } from "./render/engine";
 import { SOURCE, TICK_INTERVALS_MS } from "./config";
 import { startRenderLoop } from "./render/engine";
 import { mountViews } from "./ui/view-switch";
-import { mountDashboard } from "./ui/weather-hud";
+import { mountControlPanel } from "./ui/control-panel";
 
 const viewsContainer = document.getElementById("ant-farm-views");
 
@@ -40,12 +54,15 @@ if (!(viewsContainer instanceof HTMLElement)) {
     throw new Error('Expected a <div id="ant-farm-views"> element in index.html');
 }
 
-const { nestCanvas, surfaceCanvas, renderOptions } = mountViews(viewsContainer);
+const { sceneContainer } = mountViews(viewsContainer);
+const { renderOptions, onResetView, update: updatePanel } = mountControlPanel(viewsContainer);
 
 // Fixed, same as scripts/print-sim.ts — deterministic while tuning behavior.
 const seed = 12345;
 
 let state = createInitialState(seed);
+let prevState: ColonyState | undefined;
+let tickStartTime = performance.now();
 
 // ---- TuningStats accumulator ----
 
@@ -170,42 +187,25 @@ function updateTuningStats(stats: TuningStats, nextState: ColonyState, events: S
 
 const stats = createTuningStats(state);
 
-startRenderLoop(nestCanvas, surfaceCanvas, () => state, renderOptions);
-mountDashboard(viewsContainer, () => state, () => stats);
+const frameSource: FrameSource = {
+    getPrev: () => prevState,
+    getCurr: () => state,
+    getTickStartTime: () => tickStartTime,
+};
 
-// ============================================================================
-// TEMPORARY — DELETE BEFORE CLOUDFLARE
-// DAY_LENGTH_TICKS is 1000 ticks; at TICK_INTERVALS_MS=100ms that's a ~100s
-// real day, too slow to eyeball season/weather cycling while tuning. This
-// button multiplies ticks-per-interval rather than shrinking the interval
-// itself, so TICK_INTERVALS_MS (and anything timing-sensitive around it)
-// stays untouched — it's purely "run more simulated ticks per real second."
-let fastForward = false;
-const ffButton = document.createElement("button");
-ffButton.type = "button";
-ffButton.textContent = "Fast-forward: OFF";
-ffButton.style.position = "fixed";
-ffButton.style.bottom = "0.5rem";
-ffButton.style.left = "0.5rem";
-ffButton.style.zIndex = "1001";
-ffButton.addEventListener("click", () => {
-    fastForward = !fastForward;
-    ffButton.textContent = fastForward ? "Fast-forward: ON (20x)" : "Fast-forward: OFF";
-});
-document.body.appendChild(ffButton);
-// ============================================================================
+const scene = startRenderLoop(sceneContainer, frameSource, renderOptions);
+onResetView(scene.resetCamera);
+updatePanel(state, stats);
 
 if (SOURCE === "local") {
     setInterval(() => {
-        // One tick at a time even in fast-forward, so updateTuningStats sees
-        // each tick's own simTime + events (bucketing 20 ticks of deaths onto
-        // one timestamp would skew every windowed readout on the dashboard).
-        const ticksThisInterval = fastForward ? 20 : 1;
-        for (let i = 0; i < ticksThisInterval; i++) {
-            const result = step(state, 1);
-            state = result.state;
-            updateTuningStats(stats, state, result.events);
-        }
+        const stateBeforeThisInterval = state;
+        const result = step(state, 1);
+        state = result.state;
+        updateTuningStats(stats, state, result.events);
+        prevState = stateBeforeThisInterval;
+        tickStartTime = performance.now();
+        updatePanel(state, stats);
     }, TICK_INTERVALS_MS);
 } else {
     // Phase 6

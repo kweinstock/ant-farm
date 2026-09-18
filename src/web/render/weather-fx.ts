@@ -9,18 +9,23 @@
 // just needs to look stable frame-to-frame rather than jitter randomly.
 import type { EnvState } from "../../sim/state";
 
-const RAIN_STREAK_COUNT = 60;
-const RAIN_LENGTH = 14;
-const RAIN_SPEED = 0.9;
+// Beefed up across the board (more/bigger/more opaque particles) — the
+// original counts/alphas were tuned back when this painted onto the
+// surface-only cube face (weather-overlay.ts), where anything short of
+// fully covering it read as "some specks on one tile." At full-viewport
+// scale, that same density reads as "barely there."
+const RAIN_STREAK_COUNT = 160;
+const RAIN_LENGTH = 22;
+const RAIN_SPEED = 1.5;
 
-const SNOW_FLAKE_COUNT = 50;
-const SNOW_FALL_SPEED = 0.05;
+const SNOW_FLAKE_COUNT = 120;
+const SNOW_FALL_SPEED = 0.08;
 const SNOW_DRIFT_SPEED = 0.0015;
 
-const WIND_STREAK_COUNT = 20;
-const WIND_SPEED = 0.6;
+const WIND_STREAK_COUNT = 45;
+const WIND_SPEED = 1.0;
 
-const HEAT_BAND_COUNT = 5;
+const HEAT_BAND_COUNT = 7;
 
 function hash(i: number, salt: number): number {
     const x = Math.sin(i * 12.9898 + salt * 78.233) * 43758.5453;
@@ -29,15 +34,15 @@ function hash(i: number, salt: number): number {
 
 function renderRain(ctx: CanvasRenderingContext2D, w: number, h: number, frameTime: number): void {
     ctx.save();
-    ctx.strokeStyle = "rgba(180, 200, 230, 0.5)";
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(190, 210, 235, 0.75)";
+    ctx.lineWidth = 1.5;
     for (let i = 0; i < RAIN_STREAK_COUNT; i++) {
         const x = hash(i, 1) * w;
         const fallOffset = (frameTime * RAIN_SPEED + hash(i, 2) * h * 4) % (h + RAIN_LENGTH);
         const y = fallOffset - RAIN_LENGTH;
         ctx.beginPath();
         ctx.moveTo(x, y);
-        ctx.lineTo(x - 2, y + RAIN_LENGTH);
+        ctx.lineTo(x - 3, y + RAIN_LENGTH);
         ctx.stroke();
     }
     ctx.restore();
@@ -45,13 +50,13 @@ function renderRain(ctx: CanvasRenderingContext2D, w: number, h: number, frameTi
 
 function renderSnow(ctx: CanvasRenderingContext2D, w: number, h: number, frameTime: number): void {
     ctx.save();
-    ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+    ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
     for (let i = 0; i < SNOW_FLAKE_COUNT; i++) {
         const baseX = hash(i, 3) * w;
         const drift = Math.sin(frameTime * SNOW_DRIFT_SPEED + i) * 10;
         const x = (baseX + drift + w) % w;
         const y = (frameTime * SNOW_FALL_SPEED + hash(i, 4) * h * 4) % h;
-        const radius = 1 + hash(i, 5) * 1.5;
+        const radius = 1.5 + hash(i, 5) * 2.2;
         ctx.beginPath();
         ctx.arc(x, y, radius, 0, Math.PI * 2);
         ctx.fill();
@@ -61,11 +66,11 @@ function renderSnow(ctx: CanvasRenderingContext2D, w: number, h: number, frameTi
 
 function renderWind(ctx: CanvasRenderingContext2D, w: number, h: number, frameTime: number): void {
     ctx.save();
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
+    ctx.lineWidth = 1.5;
     for (let i = 0; i < WIND_STREAK_COUNT; i++) {
         const y = hash(i, 6) * h;
-        const length = 20 + hash(i, 7) * 30;
+        const length = 30 + hash(i, 7) * 50;
         const x = ((frameTime * WIND_SPEED + hash(i, 8) * w * 3) % (w + length)) - length;
         ctx.beginPath();
         ctx.moveTo(x, y);
@@ -84,8 +89,8 @@ function renderHeatShimmer(ctx: CanvasRenderingContext2D, w: number, h: number, 
     for (let i = 0; i < HEAT_BAND_COUNT; i++) {
         const bandY = bandHeight * i;
         const wobble = Math.sin(frameTime * 0.002 + i) * 4;
-        const alpha = Math.max(0, 0.04 + 0.02 * Math.sin(frameTime * 0.003 + i * 1.7));
-        ctx.fillStyle = `rgba(255, 200, 120, ${alpha})`;
+        const alpha = Math.max(0, 0.08 + 0.05 * Math.sin(frameTime * 0.003 + i * 1.7));
+        ctx.fillStyle = `rgba(255, 190, 110, ${alpha})`;
         ctx.fillRect(0, bandY + wobble, w, bandHeight);
     }
     ctx.restore();

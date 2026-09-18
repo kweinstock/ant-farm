@@ -1,95 +1,218 @@
-// Shared by both views (render/nest-view.ts, render/surface-view.ts) — each
-// filters state.ants by ant.location.where itself and calls this once per
-// ant it owns. cellSize is a parameter, not a module constant, because the
-// two views scale differently (config.ts's CELL_SIZE vs
-// SURFACE_CELL_SIZE) — one drawAnt serves both without duplicating the
-// caste-radius/color logic per view.
+// Ant/queen/corpse sprite ART ONLY — this file draws canvases once at
+// module load and exports them; it never touches a live render target.
 //
-// drawCorpse lives here too rather than in its own render/corpses.ts — it's
-// a couple of constants and one small draw call, the same size class as
-// drawAnt, and both views already import from this file.
-import type { Ant } from "../../sim/ants/ant";
-import type { Corpse } from "../../sim/corpses";
+// PHASE 12 (ant art, part 2): ants used to be painted straight into the
+// flat nest/surface CanvasTexture (a 2D drawAnt() call per ant, every
+// frame). They're real 3D objects now — render/ant-props.ts stands one
+// upright cutout per ant on the cube itself, the same "canvas-drawn art on
+// a PlaneGeometry" technique render/props.ts uses for trees and rocks, so
+// ants stop reading as flat paint on the ground and actually stand in the
+// scene. This file only builds the sprite ART (the canvas each caste's
+// texture is drawn onto, once, at module load) — render/ant-props.ts owns
+// placing, rotating, and animating them every frame.
+//
+// buildAntSprite draws a stylized ant silhouette — segmented body, legs,
+// antennae, a big cartoon eye, a thick outline in the Paper-Mario-ish
+// direction Phase 12 settled on — onto a transparent canvas, facing +x
+// (east). state/interpolate.ts's headingRad uses the same atan2(dy, dx)
+// convention (0 = facing +x), so whatever consumes this sprite can rotate
+// it directly by heading with no offset. This is still placeholder art —
+// no walk-cycle frames, no left/right mirroring beyond rotation — but it's
+// a real silhouette instead of a dot.
+//
+// The corpse sprite lives here too rather than in its own module — it's a
+// couple of constants and one small canvas-drawing function, the same size
+// class as buildAntSprite. render/corpse-props.ts (not this file) turns it
+// into a real decal mesh — corpses used to be a flat 2D drawCorpse() call
+// straight into the shared nest/surface CanvasTexture, which is exactly
+// what caused them (and brood, and food) to blur and bleed into
+// neighboring tiles once zoomed in; see corpse-props.ts's header.
 
-const WORKER_RADIUS_RATIO = 0.3;
-const QUEEN_RADIUS_RATIO = 0.45;
-const WORKER_COLOR = "#2b2118";
-const QUEEN_COLOR = "#8a1c3b";
-const CARRY_DOT_RADIUS_RATIO = 0.09;
-const EGG_CARRY_DOT_COLOR = "#fbf1d0";
-const FOOD_CARRY_DOT_COLOR = "#5c8a3a";
-const CORPSE_CARRY_DOT_COLOR = "#8a8478";
+// Source sprite canvas size (rendered once, well above final on-screen size
+// so scaling down stays crisp) and its aspect ratio, used by anything that
+// draws WORKER_SPRITE/QUEEN_SPRITE at a caste-specific width.
+const SPRITE_WIDTH = 96;
+const SPRITE_HEIGHT = 60;
+export const SPRITE_ASPECT = SPRITE_HEIGHT / SPRITE_WIDTH;
 
-// Noticeably smaller than a worker (WORKER_RADIUS_RATIO 0.3) and drawn as a
-// squashed ellipse rather than a circle, so a corpse reads as "a small body
-// lying down" rather than just a dimmer, smaller ant.
-const CORPSE_RADIUS_RATIO = 0.16;
-const CORPSE_VERTICAL_SQUASH = 0.7;
-const CORPSE_COLOR = "#5a5248";
+// How wide (in grid tiles) each caste's sprite is drawn — a worker's whole
+// body-length spans a bit more than one tile, a queen noticeably more,
+// echoing the old WORKER/QUEEN_RADIUS_RATIO split (0.3 vs 0.45) but as a
+// body-length instead of a dot radius.
+export const WORKER_WIDTH_RATIO = 1.15;
+export const QUEEN_WIDTH_RATIO = 1.7;
 
-export function drawAnt(ctx: CanvasRenderingContext2D, ant: Ant, cellSize: number, carryingCorpse = false): void {
-    const isQueen = ant.caste === "QUEEN";
-    const pos = ant.location.pos;
+type AntSpritePalette = {
+    bodyColor: string;
+    headColor: string;
+    highlightColor: string;
+    outlineColor: string;
+};
 
-    const centerX = pos.x * cellSize + cellSize / 2;
-    const centerY = pos.y * cellSize + cellSize / 2;
-    const radius = cellSize * (isQueen ? QUEEN_RADIUS_RATIO : WORKER_RADIUS_RATIO);
+const WORKER_PALETTE: AntSpritePalette = {
+    bodyColor: "#2b2118",
+    headColor: "#1f1710",
+    highlightColor: "#4a392a",
+    outlineColor: "#0c0906",
+};
 
-    ctx.fillStyle = isQueen ? QUEEN_COLOR : WORKER_COLOR;
+const QUEEN_PALETTE: AntSpritePalette = {
+    bodyColor: "#8a1c3b",
+    headColor: "#6e1530",
+    highlightColor: "#c96f8a",
+    outlineColor: "#3a0b18",
+};
+
+// Drawn facing +x (east) — gaster at the back (-x), head at the front (+x).
+function buildAntSprite(palette: AntSpritePalette): HTMLCanvasElement {
+    const canvas = document.createElement("canvas");
+    canvas.width = SPRITE_WIDTH;
+    canvas.height = SPRITE_HEIGHT;
+    const ctx = canvas.getContext("2d");
+    if (ctx === null) {
+        throw new Error("Could not get 2D canvas context for ant sprite");
+    }
+
+    const cx = SPRITE_WIDTH / 2;
+    const cy = SPRITE_HEIGHT / 2;
+
+    ctx.strokeStyle = palette.outlineColor;
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+
+    // Legs, drawn first so the body segments layer on top of them.
     ctx.beginPath();
-    ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+    for (const lx of [cx - 22, cx - 6, cx + 9]) {
+        ctx.moveTo(lx, cy - 3);
+        ctx.lineTo(lx - 9, cy - 19);
+        ctx.moveTo(lx, cy + 3);
+        ctx.lineTo(lx - 9, cy + 19);
+    }
+    ctx.stroke();
+
+    // Antennae, forward of the head.
+    ctx.beginPath();
+    ctx.moveTo(cx + 31, cy - 5);
+    ctx.quadraticCurveTo(cx + 44, cy - 19, cx + 52, cy - 23);
+    ctx.moveTo(cx + 31, cy + 3);
+    ctx.quadraticCurveTo(cx + 45, cy + 11, cx + 53, cy + 15);
+    ctx.stroke();
+
+    // Gaster (back segment, largest).
+    ctx.fillStyle = palette.bodyColor;
+    ctx.beginPath();
+    ctx.ellipse(cx - 24, cy, 22, 15, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // A soft highlight patch on the gaster, same trick as
+    // render/props.ts's tree-canopy highlight — one cheap ellipse suggests
+    // a lit surface without real shading.
+    ctx.globalAlpha = 0.55;
+    ctx.fillStyle = palette.highlightColor;
+    ctx.beginPath();
+    ctx.ellipse(cx - 30, cy - 6, 9, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // Thorax (middle segment).
+    ctx.fillStyle = palette.bodyColor;
+    ctx.beginPath();
+    ctx.ellipse(cx + 2, cy, 13, 10, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Head (front segment).
+    ctx.fillStyle = palette.headColor;
+    ctx.beginPath();
+    ctx.arc(cx + 27, cy, 13, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // A single big cartoon eye reads better than two at this scale.
+    ctx.fillStyle = "#f7efe0";
+    ctx.beginPath();
+    ctx.arc(cx + 31, cy - 3, 3.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = palette.outlineColor;
+    ctx.beginPath();
+    ctx.arc(cx + 32, cy - 3, 1.7, 0, Math.PI * 2);
     ctx.fill();
 
-    const carryDotRadius = cellSize * CARRY_DOT_RADIUS_RATIO;
-    const carryDotY = centerY - radius - carryDotRadius;
-
-    // Independent checks, not if/else — a forager never carries eggs and a
-    // nurse never carries food (ant.ts's carrying/carryingFood comment), and
-    // an undertaker never carries either (corpses.ts's assignUndertakers
-    // candidate filter excludes anyone already carrying), so in practice at
-    // most one of these three ever fires — but nothing here assumes that.
-    if (ant.carrying.length > 0) {
-        ctx.fillStyle = EGG_CARRY_DOT_COLOR;
-        ctx.beginPath();
-        ctx.arc(centerX, carryDotY, carryDotRadius, 0, Math.PI * 2);
-        ctx.fill();
-    }
-
-    if (ant.carryingFood > 0) {
-        ctx.fillStyle = FOOD_CARRY_DOT_COLOR;
-        ctx.beginPath();
-        ctx.arc(centerX, carryDotY, carryDotRadius, 0, Math.PI * 2);
-        ctx.fill();
-    }
-
-    // `carryingCorpse` is passed in rather than read off `ant.undertaking`
-    // here — undertaking covers the whole assignment (walk to the corpse,
-    // pick it up, haul it, drop it), but this dot should only show during
-    // the haul leg, same as the two dots above only show while actual cargo
-    // is held. The caller builds this from state.corpses' carriedBy, not
-    // from ant.undertaking !== undefined — see nest-view.ts/surface-view.ts.
-    if (carryingCorpse) {
-        ctx.fillStyle = CORPSE_CARRY_DOT_COLOR;
-        ctx.beginPath();
-        ctx.arc(centerX, carryDotY, carryDotRadius, 0, Math.PI * 2);
-        ctx.fill();
-    }
+    return canvas;
 }
 
-export function drawCorpse(
-    ctx: CanvasRenderingContext2D,
-    corpse: Corpse,
-    cellSize: number,
-    offset: { dx: number; dy: number } = { dx: 0, dy: 0 }
-): void {
-    const pos = corpse.location.pos;
-    const centerX = pos.x * cellSize + cellSize / 2 + offset.dx;
-    const centerY = pos.y * cellSize + cellSize / 2 + offset.dy;
-    const radiusX = cellSize * CORPSE_RADIUS_RATIO;
-    const radiusY = radiusX * CORPSE_VERTICAL_SQUASH;
+export const WORKER_SPRITE = buildAntSprite(WORKER_PALETTE);
+export const QUEEN_SPRITE = buildAntSprite(QUEEN_PALETTE);
 
+// A muted, desaturated body with limp splayed legs (irregular angles,
+// unlike buildAntSprite's tidy symmetric walking pose) and an X for the
+// eye — the universal "this one's dead" cue.
+const CORPSE_SPRITE_SIZE = 40;
+// How wide (in grid tiles) a corpse decal is drawn — exported for
+// render/corpse-props.ts's sizing.
+export const CORPSE_WIDTH_RATIO = 0.32;
+const CORPSE_COLOR = "#6b6255";
+const CORPSE_OUTLINE = "#332e26";
+
+function buildCorpseSprite(): HTMLCanvasElement {
+    const canvas = document.createElement("canvas");
+    canvas.width = CORPSE_SPRITE_SIZE;
+    canvas.height = CORPSE_SPRITE_SIZE;
+    const ctx = canvas.getContext("2d");
+    if (ctx === null) {
+        throw new Error("Could not get 2D canvas context for corpse sprite");
+    }
+    const cx = CORPSE_SPRITE_SIZE / 2;
+    const cy = CORPSE_SPRITE_SIZE / 2;
+
+    // Limp legs, splayed at irregular angles (unlike buildAntSprite's tidy
+    // symmetric walking pose) — drawn first, under the body.
+    ctx.strokeStyle = CORPSE_OUTLINE;
+    ctx.lineWidth = 1.6;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    const legs: [number, number, number, number][] = [
+        [-6, -3, -13, -10],
+        [-1, -5, -4, -15],
+        [5, -4, 11, -11],
+        [-7, 3, -14, 9],
+        [0, 5, 1, 15],
+        [6, 4, 13, 10],
+    ];
+    for (const [x1, y1, x2, y2] of legs) {
+        ctx.moveTo(cx + x1, cy + y1);
+        ctx.lineTo(cx + x2, cy + y2);
+    }
+    ctx.stroke();
+
+    // Body — one squashed ellipse plus a small head bump, simpler than
+    // buildAntSprite's three segments since a corpse reads at a much
+    // smaller size.
     ctx.fillStyle = CORPSE_COLOR;
+    ctx.strokeStyle = CORPSE_OUTLINE;
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx - 2, cy, 13, 7, 0, 0, Math.PI * 2);
     ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx + 12, cy, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // An X for the eye — the one cue that reads as "dead" rather than
+    // "small ant."
+    ctx.strokeStyle = CORPSE_OUTLINE;
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(cx + 10, cy - 2);
+    ctx.lineTo(cx + 14, cy + 2);
+    ctx.moveTo(cx + 14, cy - 2);
+    ctx.lineTo(cx + 10, cy + 2);
+    ctx.stroke();
+
+    return canvas;
 }
+
+export const CORPSE_SPRITE = buildCorpseSprite();
