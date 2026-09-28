@@ -332,7 +332,7 @@ function singleTick(state: ColonyState): TickResult {
                 antId: currentState.queenId,
                 ageTicks: queenResult.queen.ageTicks,
                 where: queenResult.queen.location.where,
-                cause: "oldAge",
+                cause: queenResult.deathCause ?? "oldAge",
             });
         } else {
             nextAntsAfterQueen.set(currentState.queenId, queenResult.queen);

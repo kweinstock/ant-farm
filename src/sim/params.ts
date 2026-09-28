@@ -50,66 +50,67 @@ import type { WeatherKind } from "./environment/weather";
 // ============================================================================
 
 // ---- Queen & brood ----
-export const BASE_LAY_PROBABILITY = 0.2068; // per-tick chance the queen lays an egg when otherwise eligible
-export const POPULATION_SOFT_TARGET = 51; // lay probability tapers off as the live worker count approaches this
+export const BASE_LAY_PROBABILITY = 0.0667; // per-tick chance the queen lays an egg when otherwise eligible
+export const POPULATION_SOFT_TARGET = 15; // lay probability tapers off as the live worker count approaches this
+export const FOOD_STORE_LAY_HALT_RATIO = 0.1308; // below this fraction of food store capacity, the queen stops laying entirely IF population is also >= POPULATION_SOFT_TARGET — the real brake against booming past what the surface can feed
 
 // ---- Jobs & nursing ----
-export const NURSE_AGE_THRESHOLD_TICKS = 394; // workers younger than this default to NURSE, older to FORAGER
-export const NURSE_BROOD_PER_NURSE = 12; // target brood-per-nurse ratio reassignJobs tries to hold
-export const NURSE_LAY_HEADROOM = 2.2133; // extra nurse capacity kept above current brood, to absorb the queen's next lay
+export const NURSE_AGE_THRESHOLD_TICKS = 345; // workers younger than this default to NURSE, older to FORAGER
+export const NURSE_BROOD_PER_NURSE = 3; // target brood-per-nurse ratio reassignJobs tries to hold
+export const NURSE_LAY_HEADROOM = 2.0769; // extra nurse capacity kept above current brood, to absorb the queen's next lay
 
 // ---- Pheromone trail ----
-export const MAX_TRAIL = 597; // ceiling a trail cell's strength can accumulate to
-export const EVAPORATION_FACTOR = 0.9714; // per-tick multiplicative decay applied to every trail cell
-export const MIN_TRAIL = 7.8854; // floor below which a decaying trail cell snaps to zero
-export const SPREAD_FRAC = 0.4986; // fraction of a deposit that also spreads into neighboring cells
-export const FOLLOW_THRESHOLD = 25; // minimum trail strength before a forager will follow it over its own memory
-export const DEPOSIT_AMOUNT = 73; // trail strength added per tick by a forager laying scent
+export const MAX_TRAIL = 661; // ceiling a trail cell's strength can accumulate to
+export const EVAPORATION_FACTOR = 0.9576; // per-tick multiplicative decay applied to every trail cell
+export const MIN_TRAIL = 5.3968; // floor below which a decaying trail cell snaps to zero
+export const SPREAD_FRAC = 0.5125; // fraction of a deposit that also spreads into neighboring cells
+export const FOLLOW_THRESHOLD = 20; // minimum trail strength before a forager will follow it over its own memory
+export const DEPOSIT_AMOUNT = 131; // trail strength added per tick by a forager laying scent
 
 // ---- Alarm trail ----
-export const ALARM_MAX = 473; // ceiling an alarm cell's strength can accumulate to
-export const ALARM_EVAPORATION_FACTOR = 0.6115; // per-tick multiplicative decay applied to every alarm cell (faster than the food trail's)
-export const ALARM_DEPOSIT_AMOUNT = 132; // alarm strength deposited when an ant flees or witnesses a predator strike
-export const ALARM_SPREAD_FRAC = 0.5174; // fraction of an alarm deposit that also spreads into neighboring cells
-export const ALARM_FLEE_THRESHOLD = 69; // minimum alarm strength before a nearby ant breaks off to flee
+export const ALARM_MAX = 207; // ceiling an alarm cell's strength can accumulate to
+export const ALARM_EVAPORATION_FACTOR = 0.5712; // per-tick multiplicative decay applied to every alarm cell (faster than the food trail's)
+export const ALARM_DEPOSIT_AMOUNT = 76; // alarm strength deposited when an ant flees or witnesses a predator strike
+export const ALARM_SPREAD_FRAC = 0.6066; // fraction of an alarm deposit that also spreads into neighboring cells
+export const ALARM_FLEE_THRESHOLD = 61; // minimum alarm strength before a nearby ant breaks off to flee
 
 // ---- Surface food piles ----
-export const MAX_PILES = 53; // cap on distinct food pile tiles allowed on the surface at once
-export const FOOD_PILE_START_AMOUNT = 378; // food units a freshly spawned pile starts with
-export const FOOD_TILE_CAPACITY = 440; // ceiling a single pile tile can be topped back up to
-export const PILE_SPAWN_CHANCE = 0.2366; // per-tick base chance of attempting to spawn or replenish a pile
+export const MAX_PILES = 752; // cap on distinct food pile tiles allowed on the surface at once
+export const FOOD_PILE_START_AMOUNT = 6169; // food units a freshly spawned pile starts with
+export const FOOD_TILE_CAPACITY = 3944; // ceiling a single pile tile can be topped back up to
+export const PILE_SPAWN_CHANCE = 0.9744; // per-tick base chance of attempting to spawn or replenish a pile
 
 // ---- Foraging memory ----
-export const FORAGING_TRIP_FAILURE_TICKS = 150; // a trip running longer than this is scored as a failure for trust-weight learning
-export const MAX_REMEMBERED = 4; // max food sites a single ant keeps in memory at once
-export const MEMORY_TTL_TICKS = 300; // ticks a remembered food site stays valid before it's considered stale
-export const EMPTY_PATCH_TTL_TICKS = 200; // ticks a patch stays marked "known empty" before an ant will re-explore it
-export const MAX_EMPTY_PATCHES_REMEMBERED = 8; // max "known empty" patches a single ant keeps in memory at once
+export const FORAGING_TRIP_FAILURE_TICKS = 175; // a trip running longer than this is scored as a failure for trust-weight learning
+export const MAX_REMEMBERED = 7; // max food sites a single ant keeps in memory at once
+export const MEMORY_TTL_TICKS = 73; // ticks a remembered food site stays valid before it's considered stale
+export const EMPTY_PATCH_TTL_TICKS = 383; // ticks a patch stays marked "known empty" before an ant will re-explore it
+export const MAX_EMPTY_PATCHES_REMEMBERED = 17; // max "known empty" patches a single ant keeps in memory at once
 
 // ---- Teaching & learned trust ----
-export const PATCH_QUALITY_EMA_ALPHA = 0.3; // smoothing factor for the exponential moving average tracking a patch's remembered quality
-export const MAX_PREDATOR_SIGHTINGS = 5; // max predator sightings a single ant keeps in memory at once
-export const PREDATOR_SIGHTING_TTL_TICKS = 500; // ticks a remembered predator sighting stays valid before it's considered stale
-export const PATCH_QUALITY_RICHNESS_WEIGHT = 1.5; // weight a known patch-quality entry contributes to an ant's memory richness score
-export const PREDATOR_SIGHTING_RICHNESS_WEIGHT = 1; // weight a fresh predator sighting contributes to an ant's memory richness score
+export const PATCH_QUALITY_EMA_ALPHA = 0.2597; // smoothing factor for the exponential moving average tracking a patch's remembered quality
+export const MAX_PREDATOR_SIGHTINGS = 10; // max predator sightings a single ant keeps in memory at once
+export const PREDATOR_SIGHTING_TTL_TICKS = 416; // ticks a remembered predator sighting stays valid before it's considered stale
+export const PATCH_QUALITY_RICHNESS_WEIGHT = 1.3595; // weight a known patch-quality entry contributes to an ant's memory richness score
+export const PREDATOR_SIGHTING_RICHNESS_WEIGHT = 3.8155; // weight a fresh predator sighting contributes to an ant's memory richness score
 export const ABSORB_MAX_TRANSFER = 2; // max entries of any one memory category transferred in a single teaching exchange
-export const LEARNING_BASELINE = 1.0; // starting value for every per-ant learned trust weight
-export const LEARNING_MIN = 0.2; // floor a learned trust weight can be reinforced down to
-export const LEARNING_MAX = 3.0; // ceiling a learned trust weight can be reinforced up to
-export const REINFORCE_STEP = 0.1; // amount a trust weight moves per reinforcement event
-export const KNOWLEDGE_SHARE_CHANCE = 0.15; // per-tick, per-chamber-group chance that the richest ant present teaches its roommates
+export const LEARNING_BASELINE = 0.8969; // starting value for every per-ant learned trust weight
+export const LEARNING_MIN = 0.2856; // floor a learned trust weight can be reinforced down to
+export const LEARNING_MAX = 1.6771; // ceiling a learned trust weight can be reinforced up to
+export const REINFORCE_STEP = 0.3466; // amount a trust weight moves per reinforcement event
+export const KNOWLEDGE_SHARE_CHANCE = 0.4204; // per-tick, per-chamber-group chance that the richest ant present teaches its roommates
 
 // ---- Colony-level decisions ----
-export const DECISION_INTERVAL_TICKS = 400; // ticks between evaluateDecisions passes considering colony-level proposals
-export const DECISION_THRESHOLD = 0.6; // minimum score a proposal must clear to be committed
-export const GRAVEYARD_THREAT_RADIUS = 15; // distance within which the predator counts as threatening the graveyard
-export const GRAVEYARD_THREAT_INCREMENT = 1; // per-tick increase to graveyardThreat while the predator is within GRAVEYARD_THREAT_RADIUS
-export const GRAVEYARD_THREAT_DECAY = 0.98; // per-tick multiplicative decay applied to graveyardThreat while the predator is elsewhere
-export const GRAVEYARD_THREAT_CAP = 150; // ceiling graveyardThreat can accumulate to
-export const NURSERY_COLD_TEMP = 8; // average nursery temperature below which a cold-expansion proposal can fire
-export const NURSERY_COLD_SCALE = 10; // degrees of deficit below NURSERY_COLD_TEMP needed to fully saturate that proposal's score
-export const FOOD_STORE_TRAVEL_THRESHOLD = 35; // average food-store-to-exit distance beyond which a relocation proposal can fire
-export const FOOD_STORE_TRAVEL_SCALE = 20; // tiles of distance beyond FOOD_STORE_TRAVEL_THRESHOLD needed to fully saturate that proposal's score
+export const DECISION_INTERVAL_TICKS = 193; // ticks between evaluateDecisions passes considering colony-level proposals
+export const DECISION_THRESHOLD = 0.3; // minimum score a proposal must clear to be committed
+export const GRAVEYARD_THREAT_RADIUS = 22; // distance within which the predator counts as threatening the graveyard
+export const GRAVEYARD_THREAT_INCREMENT = 2; // per-tick increase to graveyardThreat while the predator is within GRAVEYARD_THREAT_RADIUS
+export const GRAVEYARD_THREAT_DECAY = 0.9356; // per-tick multiplicative decay applied to graveyardThreat while the predator is elsewhere
+export const GRAVEYARD_THREAT_CAP = 311; // ceiling graveyardThreat can accumulate to
+export const NURSERY_COLD_TEMP = 13; // average nursery temperature below which a cold-expansion proposal can fire
+export const NURSERY_COLD_SCALE = 20; // degrees of deficit below NURSERY_COLD_TEMP needed to fully saturate that proposal's score
+export const FOOD_STORE_TRAVEL_THRESHOLD = 16; // average food-store-to-exit distance beyond which a relocation proposal can fire
+export const FOOD_STORE_TRAVEL_SCALE = 31; // tiles of distance beyond FOOD_STORE_TRAVEL_THRESHOLD needed to fully saturate that proposal's score
 
 // ============================================================================
 // DO NOT OPTIMIZE
@@ -123,19 +124,19 @@ export const SURFACE_HEIGHT = 72; // height in tiles of the top-down surface gri
 
 // ---- Colony seed & starting economy ----
 export const STARTER_WORKER_COUNT = 20; // workers alive at colony creation, alongside the queen
-export const STARTING_FOOD_STORE = 5000; // food units the colony starts with in storage
-export const FOOD_STORE_CAP = 15000; // ceiling on total stored food across all FOOD_STORAGE chambers
+export const STARTING_FOOD_STORE = 500000; // food units the colony starts with in storage
+export const FOOD_STORE_CAP = 1500000; // ceiling on total stored food across all FOOD_STORAGE chambers
 export const FORAGER_LOAD = 100; // food units a forager carries per successful pickup
-export const EAT_AMOUNT = 40; // food units consumed from the store per "eat" action
+export const EAT_AMOUNT = 50; // food units consumed from the store per "eat" action
 
 // ---- Ant energy & lifespan ----
 export const STARTING_ENERGY = 2500; // energy a newly hatched worker/queen starts with
 export const MAX_ENERGY = 3000; // ceiling an ant's energy can be fed up to
 export const HUNGER_THRESHOLD = 0.5; // energy/MAX_ENERGY ratio below which an ant is considered hungry and seeks food
-export const MIN_LIFESPAN_TICKS = 1000; // shortest possible rolled lifespan for a worker (when sim starts 108000)
-export const MAX_LIFESPAN_TICKS = 3000; // longest possible rolled lifespan for a worker (when sim starts 378000)
-export const QUEEN_MIN_LIFESPAN_TICKS = 6000; // shortest possible rolled lifespan for the queen (when sim starts 10800000)
-export const QUEEN_MAX_LIFESPAN_TICKS = 9000; // longest possible rolled lifespan for the queen (when sim starts 16200000)
+export const MIN_LIFESPAN_TICKS = 108000; // shortest possible rolled lifespan for a worker
+export const MAX_LIFESPAN_TICKS = 378000; // longest possible rolled lifespan for a worker
+export const QUEEN_MIN_LIFESPAN_TICKS = 10800000; // shortest possible rolled lifespan for the queen
+export const QUEEN_MAX_LIFESPAN_TICKS = 16200000; // longest possible rolled lifespan for the queen
 export const METABOLISM_COST = 1; // energy a worker burns per tick just being alive
 
 // ---- Jobs, castes, movement, senses ----
@@ -157,9 +158,9 @@ export const TEND_DEATH_TICKS = 150; // ticks brood can go untended before it di
 
 
 // ---- Surface food piles (world-generation cadence, not economy tuning) ----
-export const PILE_DECAY_TICKS = 400; // ticks a food pile can sit un-topped-up before it decays away entirely
+export const PILE_DECAY_TICKS = 4000; // ticks a food pile can sit un-topped-up before it decays away entirely
 export const HOLE_EXCLUSION_RADIUS = 6; // minimum distance from the surface hole that a pile/obstacle/graveyard may spawn
-export const MAX_SPAWN_ATTEMPTS = 20; // rejection-sampling attempts allowed per spawn roll before giving up for that tick
+export const MAX_SPAWN_ATTEMPTS = 50; // rejection-sampling attempts allowed per spawn roll before giving up for that tick
 
 // ---- Fertile patches & surface obstacles ----
 export const FERTILE_PATCHES = [
@@ -191,11 +192,19 @@ export const CORPSE_DECAY_TICKS = 600; // ticks a corpse can exist before it dec
 export const CORPSE_PER_GRAVE_TILE = 2; // corpses a single graveyard tile can hold before graveyardSlot prefers a different tile
 
 // ---- Surface hazard (base layer under the predator) ----
-export const SURFACE_DEATH_CHANCE = 0.0004; // base per-tick chance of a random fatal hazard for an ant on the surface
+// Rescaled ~100x down from the original 0.0004 to match MAX_LIFESPAN_TICKS
+// growing ~126x (3000 -> 378000): this rolls every tick a worker spends on
+// the surface, so its lethality compounds with how many surface-ticks a
+// worker accumulates over its life, not with the raw per-tick number alone.
+// Left at the old value, a forager's cumulative odds of dying to plain
+// "exposure" long before old age were effectively certain — confirmed by a
+// diagnostic run where exposure was the single largest, earliest-starting
+// death cause even while the food store was still full.
+export const SURFACE_DEATH_CHANCE = 0.000004; // base per-tick chance of a random fatal hazard for an ant on the surface
 export const WANDER_EXPOSURE = 2.5; // multiplier on SURFACE_DEATH_CHANCE while an ant is aimlessly wandering rather than on task
 
 // ---- Clock ----
-export const DAY_LENGTH_TICKS = 1000; // ticks in one full day/night cycle (when sim starts 54000)
+export const DAY_LENGTH_TICKS = 54000; // ticks in one full day/night cycle
 export const DAWN_START = 0.2; // fraction of the day at which dawn begins
 export const DAY_START = 0.3; // fraction of the day at which full daytime begins
 export const DUSK_START = 0.75; // fraction of the day at which dusk begins
@@ -266,10 +275,27 @@ export const UNDERGROUND_STABLE_TEMP = 13; // temperature deep underground conve
 
 // ---- Cold death ----
 export const COLD_DEATH_TEMP = -5; // temperature at/below which the cold-death roll can start killing ants
-export const COLD_DEATH_CHANCE_AT_ZERO = 0.0002; // per-tick death chance added per degree below COLD_DEATH_TEMP
+// The earlier ~10x cut (0.0002 -> 0.00002) badly underestimated this: a
+// forager gets full ambient temp every tick it's on the surface (nest
+// workers are insulated by depth via tempAtDepth), and WINTER now lasts a
+// full ~108,000 ticks and reaches ~-12C (7 degrees below COLD_DEATH_TEMP)
+// during a cold night. At the old-fix value that's roughly a 94% death
+// chance for any forager exposed through a good chunk of one winter —
+// confirmed in a long trace where population crashed 67 -> 8 within the
+// first 16,000 ticks of the colony's first winter, entirely from "cold"
+// deaths that were previously zero all year. Cut another ~100x (matching
+// the same order of magnitude SURFACE_DEATH_CHANCE needed) so a full
+// winter's worst-case sustained exposure works out to roughly a 10-15%
+// death chance — real seasonal risk, not a guaranteed wipeout.
+export const COLD_DEATH_CHANCE_AT_ZERO = 0.0000002; // per-tick death chance added per degree below COLD_DEATH_TEMP
 
 // ---- Predator ----
-export const PREDATOR_APPEAR_CHANCE = 0.0003; // base per-tick chance of a predator spawning when none is present
+// This one is colony-wide, not per-ant, so it scales with total RUN length
+// rather than worker lifespan: at the queen's new ~16-20M tick max lifespan,
+// the old 0.0003 implied ~5000-6000 predator appearances over one run,
+// versus a handful before. Rescaled down by roughly that same ~2000x-4000x
+// jump in the intended run length.
+export const PREDATOR_APPEAR_CHANCE = 0.0000001; // base per-tick chance of a predator spawning when none is present
 export const PREDATOR_SEASON_MULT: Record<Season, number> = {
     // multiplier on PREDATOR_APPEAR_CHANCE per season
     SPRING: 1, SUMMER: 1.3, AUTTMN: 1, WINTER: 0.4,

@@ -19,13 +19,14 @@ import type { ColonyState } from "../state";
 import { layEgg, type Brood } from "./brood";
 import { allTilesOf, chamberIdAt } from "../world/nest";
 import { getNeighbors, isPassable, manhattanDistance, type Position } from "../world/grid";
-import { BASE_LAY_PROBABILITY, NURSERY_TILE_CAPACITY, NURSE_BROOD_PER_NURSE, NURSE_LAY_HEADROOM, POPULATION_SOFT_TARGET, QUEEN_STEP_INTERVAL_TICKS, SLEEP_CYCLE_TICKS, SLEEP_DURATION_TICKS, QUEEN_SLEEP_MULT } from "../params";
+import { BASE_LAY_PROBABILITY, FOOD_STORE_LAY_HALT_RATIO, NURSERY_TILE_CAPACITY, NURSE_BROOD_PER_NURSE, NURSE_LAY_HEADROOM, POPULATION_SOFT_TARGET, QUEEN_STEP_INTERVAL_TICKS, SLEEP_CYCLE_TICKS, SLEEP_DURATION_TICKS, QUEEN_SLEEP_MULT } from "../params";
 import { layFactor } from "../environment/season";
 
 export type QueenTickResult = {
     brood: Brood[];
     queen: Ant;
     isDead: boolean;
+    deathCause?: "oldAge" | "starvation";
     rngSeed: number;
 };
 
@@ -71,6 +72,7 @@ export function tickQueen(state: ColonyState): QueenTickResult {
             brood: state.brood,
             queen,
             isDead: true,
+            deathCause: metered.cause,
             rngSeed: state.rngSeed,
         };
     }
@@ -107,16 +109,29 @@ export function tickQueen(state: ColonyState): QueenTickResult {
     }
 
     const population = Math.max(state.ants.size, 1);
-    const populationFactor = POPULATION_SOFT_TARGET / Math.max(population, POPULATION_SOFT_TARGET);
+    // Squared, not linear: a colony at 2x POPULATION_SOFT_TARGET used to
+    // still lay at half rate (target/pop = 0.5) — nowhere near enough of a
+    // brake once per-ant death rates dropped low enough that population has
+    // no other real ceiling short of a food-supply crash. Squaring it drops
+    // that same 2x-over colony to a quarter rate, well before she's anywhere
+    // near the point the surface can't feed. Still an asymptotic taper, not
+    // a hard stop — a boom past target loses steam fast but keeps varying,
+    // it doesn't just freeze at some fixed headcount.
+    const populationFactor = (POPULATION_SOFT_TARGET / Math.max(population, POPULATION_SOFT_TARGET)) ** 2;
 
-    // Still no foodFactor. It's a real forager-stocked economy as of 3b, but
-    // the 10k probe showed the store sits near-full (foragers out-deliver
-    // consumption) and the colony stays bounded on populationFactor alone —
-    // adding a lay-rate brake now would just destabilise a working balance
-    // for no benefit. Phase 4 revisits it, where weather/season give a
-    // foodFactor something real to respond to.
     const foodFactor = state.foodStore.amount / state.foodStore.capacity;
     const layProbability = BASE_LAY_PROBABILITY * populationFactor * layFactor(state.env.season) * foodFactor;
+
+    // The taper above only ever slows her down, it never actually reaches
+    // zero — so with the store already running low AND a population that's
+    // already at/above what it's meant to support, every additional egg
+    // she lays now is a future mouth the colony can least afford, right when
+    // it can least afford it. This is the real circuit-breaker: a full stop
+    // that only engages when BOTH signs of resource stress line up
+    // together, not a fixed headcount ceiling — a colony that's small but
+    // temporarily low on food, or one that's big but well-stocked, is still
+    // free to keep laying and varying normally.
+    const foodCritical = foodFactor < FOOD_STORE_LAY_HALT_RATIO && population >= POPULATION_SOFT_TARGET;
 
     // Roll unconditionally (keeps the RNG cadence identical whether or not the
     // nursery is full), then gate on capacity.
@@ -155,6 +170,7 @@ export function tickQueen(state: ColonyState): QueenTickResult {
 
     const shouldLay =
         !queen.asleep &&
+        !foodCritical &&
         roll.value < layProbability &&
         state.brood.length < Math.min(nurseryCapacity, nurseCapacity);
 

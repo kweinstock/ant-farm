@@ -72,8 +72,25 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
     // Nearest uncarried egg still in a QUEEN chamber — the tile a fetching
     // nurse walks onto before pickUpEgg fires. (In practice every egg sits on
     // the queen's own tile, since she doesn't move yet.)
+    //
+    // Gated on isNursing, not just where === "nest": this is an
+    // O(brood.length) scan run once per ant per tick, and nursing.ts's
+    // decideNurse is the ONLY consumer of this field (confirmed by grep —
+    // nothing else reads queenEggPos/nurseryPlacementPos/
+    // broodNeedingTendPos/broodUrgentTendPos/eggsWaitingCount/
+    // eggsAvailableInQueenChamber anywhere in the codebase), and only when
+    // it's actually going to run decideNurse's nest-side logic — a
+    // NURSE-job ant temporarily pulled into undertaking/digging (Rule 4/5
+    // override decideNurse the same way they override decideForager) or
+    // stranded on the surface never reaches the branch that reads these.
+    // Every forager, digger, undertaker, and out-of-role nurse used to pay
+    // this cost every tick for a value it never reads — with colonies
+    // running hundreds of ants over millions of ticks, that's real wasted
+    // CPU, not a rounding error.
+    const isNursing = where === "nest" && ant.job === "NURSE" && ant.undertaking === undefined && ant.digging === undefined;
+
     let queenEggPos: Position | undefined;
-    if (where === "nest") {
+    if (isNursing) {
         let best = Infinity;
         for (const brood of state.brood) {
             if (brood.stage !== "EGG" || brood.carriedBy !== undefined) continue;
@@ -93,7 +110,7 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
     // every uncarried brood entry per tile — larvae/pupae hold a tile until
     // they eclose — matching jobs.ts's placeEgg check.
     let nurseryPlacementPos: Position | undefined;
-    if (where === "nest" && ant.carrying.length > 0) {
+    if (isNursing && ant.carrying.length > 0) {
         const occupancy = new Map<string, number>();
         for (const brood of state.brood) {
             if (brood.carriedBy !== undefined) continue;
@@ -126,7 +143,7 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
     // wipe the nursery.
     let broodNeedingTendPos: Position | undefined;
     let broodUrgentTendPos: Position | undefined;
-    if (where === "nest") {
+    if (isNursing) {
         let best = Infinity;
         let bestUrgent = Infinity;
         for (const brood of state.brood) {
@@ -166,36 +183,48 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
 
     // Surface-only, same reasoning in the other direction.
     const atHole = where === "surface" && pos.x === state.surface.holePos.x && pos.y === state.surface.holePos.y;
-    const onFoodPileId = where === "surface"
+
+    // Everything below in this block — pile lookups, trail-following,
+    // remembered-site recall, patch exploration — is read only by
+    // foraging.ts's decideForager, which never runs for an undertaking ant
+    // even while it's out on the surface hauling a corpse (behavior.ts's
+    // Rule 4 intercepts first, same as it does for a NURSE-job ant pulled
+    // into undertaking). `isForaging` gates all of it in one place instead
+    // of repeating `where === "surface"` and quietly missing the
+    // undertaking exclusion on some of them.
+    //
+    // This one matters more than it looks: onFoodPileId/nearestFoodPilePos/
+    // pileAt/patchHasPile are each O(state.surface.foodPiles.length), and
+    // patch exploration calls patchHasPile per patch (8x). The comment this
+    // replaced ("MAX_PILES ~= 10 ... cheap") predates MAX_PILES's search
+    // bound widening to 1000 earlier this session — genomes the optimizer
+    // is now finding routinely sit at 600-950 piles, so this was quietly
+    // becoming one of the most expensive parts of the whole tick.
+    const isForaging = where === "surface" && ant.undertaking === undefined;
+
+    const onFoodPileId = isForaging
         ? state.surface.foodPiles.find((pile) => pile.pos.x === pos.x && pile.pos.y === pos.y)?.id
         : undefined;
-    
+
     const holePos = state.surface.holePos;
 
-    // MAX_PILES ~= 10, so scanning every pile per forager per tick (inside
-    // nearestPile) is cheap — same cost class as chamberAt's per-tile scan
-    // on the nest side.
     let nearestFoodPilePos: Position | undefined = undefined;
-    if (where === "surface") {
+    if (isForaging) {
         const nearest = nearestPile(state.surface, pos);
         if (nearest !== undefined && manhattanDistance(nearest.pos, pos) <= SIGHT_RADIUS) {
             nearestFoodPilePos = nearest.pos;
         }
     }
 
-    // trail-following and memory, both surface-only — a nest-side
-    // ant has no surface.trail to read and never accumulates foodSites in
-    // the first place (rememberFoodSite is only ever called from
-    // foraging.ts's surface-side pickUpFood handler).
     // Follow the trail OUTBOUND only (away from the hole) — see
     // strongestPassableNeighbor's comment on why a plain gradient-follow
     // pulls foragers back toward the nest.
-    const trailNeighbor = where === "surface"
+    const trailNeighbor = isForaging
         ? strongestPassableNeighbor(state.surface.trail, state.surface.grid, pos.x, pos.y, state.surface.holePos)
         : undefined;
     const pileAt = (p: Position): boolean =>
         state.surface.foodPiles.some((pile) => pile.amount > 0 && pile.pos.x === p.x && pile.pos.y === p.y);
-    const rememberedFoodPos = where === "surface"
+    const rememberedFoodPos = isForaging
         ? bestRememberedSite(ant.memory, state.simTime, pileAt)
         : undefined;
 
@@ -207,7 +236,7 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
     // re-checking the same dry patch), skipping the one it's standing in.
     let nearestPatchTarget: Position | undefined;
     let barrenPatchIndex: number | undefined;
-    if (where === "surface") {
+    if (isForaging) {
         const patches = state.surface.patches;
         const centroidOf = (p: { x0: number; y0: number; x1: number; y1: number }): Position => ({
             x: Math.floor((p.x0 + p.x1) / 2),
@@ -279,42 +308,61 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
     }
 
     // "Available" means: still an EGG, physically still sitting in the
-    // QUEEN chamber, and not already claimed by a nurse. Nest-only in
-    // practice (a forager never reads this) but computed unconditionally,
-    // same as before this phase — cheap enough that gating it behind
-    // `where` would just be an extra branch for no real savings.
+    // QUEEN chamber, and not already claimed by a nurse. Only decideNurse
+    // ever reads this (confirmed by grep, same as the other brood-scan
+    // fields above), and only past its where === "surface" early-return —
+    // gated on isNursing for the same reason as those: an O(brood.length)
+    // scan every tick for every ant, including every ant that never
+    // touches the result, is real cost at scale.
     let eggsWaitingCount = 0;
-    for (const brood of state.brood) {
-        if (
-            brood.stage === "EGG" &&
-            brood.carriedBy === undefined &&
-            chamberAt(state.nest, brood.position) === "QUEEN"
-        ) {
-            eggsWaitingCount += 1;
+    if (isNursing) {
+        for (const brood of state.brood) {
+            if (
+                brood.stage === "EGG" &&
+                brood.carriedBy === undefined &&
+                chamberAt(state.nest, brood.position) === "QUEEN"
+            ) {
+                eggsWaitingCount += 1;
+            }
         }
     }
     const eggsAvailableInQueenChamber = eggsWaitingCount > 0;
 
-    const assignedCorpseEntry = ant.undertaking !== undefined ? corpseById(state, ant.undertaking.corpseId) : undefined;
+    // Every field in this block is read ONLY by undertaking.ts's
+    // decideUndertaker, which never runs unless ant.undertaking is set
+    // (behavior.ts's Rule 4). graveyardSlot() and the carryingCorpse scan
+    // are each O(state.corpses.length) — the "cheap enough (24-ish tiles)"
+    // reasoning graveyardSlot used to be computed under only looked at its
+    // OWN tile loop and missed the occupancy scan over every corpse that
+    // runs before it. Same shape of waste as the brood-scan fields above:
+    // every nurse and forager paid this every tick for a value only an
+    // actively-undertaking ant ever reads.
+    let assignedCorpse: { pos: Position; where: "nest" | "surface" } | undefined;
+    let assignedCorpseBuried = false;
+    let carryingCorpse = false;
+    let onAssignedCorpse = false;
+    let graveyardPos: Position = { x: state.surface.graveyard.x0, y: state.surface.graveyard.y0 };
+    let atGraveyardSlot = false;
+    if (ant.undertaking !== undefined) {
+        const assignedCorpseEntry = corpseById(state, ant.undertaking.corpseId);
 
-    const assignedCorpse = assignedCorpseEntry
-        ? { pos: assignedCorpseEntry.location.pos, where: assignedCorpseEntry.location.where }
-        : undefined;
+        assignedCorpse = assignedCorpseEntry
+            ? { pos: assignedCorpseEntry.location.pos, where: assignedCorpseEntry.location.where }
+            : undefined;
 
-    // Assigned corpse is already at rest (someone else buried it while I was
-    // en route) — decideUndertaker uses this to abort instead of walking to
-    // the graveyard to "re-bury" it.
-    const assignedCorpseBuried =
-        assignedCorpseEntry !== undefined &&
-        assignedCorpseEntry.location.where === "surface" &&
-        surfaceInGraveyard(state.surface, assignedCorpseEntry.location.pos);
+        // Assigned corpse is already at rest (someone else buried it while I
+        // was en route) — decideUndertaker uses this to abort instead of
+        // walking to the graveyard to "re-bury" it.
+        assignedCorpseBuried =
+            assignedCorpseEntry !== undefined &&
+            assignedCorpseEntry.location.where === "surface" &&
+            surfaceInGraveyard(state.surface, assignedCorpseEntry.location.pos);
 
-    const carryingCorpse = state.corpses.some((corpse) => corpse.carriedBy === ant.id);
-    const onAssignedCorpse = assignedCorpse !== undefined && assignedCorpse.where === where && assignedCorpse.pos.x === pos.x && assignedCorpse.pos.y === pos.y;
-    // Only meaningful for a carrying undertaker, but cheap enough (24-ish
-    // tiles) to compute unconditionally, like holePos.
-    const graveyardPos = graveyardSlot(state.surface, state.corpses, pos);
-    const atGraveyardSlot = where === "surface" && pos.x === graveyardPos.x && pos.y === graveyardPos.y;
+        carryingCorpse = state.corpses.some((corpse) => corpse.carriedBy === ant.id);
+        onAssignedCorpse = assignedCorpse !== undefined && assignedCorpse.where === where && assignedCorpse.pos.x === pos.x && assignedCorpse.pos.y === pos.y;
+        graveyardPos = graveyardSlot(state.surface, state.corpses, pos);
+        atGraveyardSlot = where === "surface" && pos.x === graveyardPos.x && pos.y === graveyardPos.y;
+    }
     const inGraveyard = where === "surface" && surfaceInGraveyard(state.surface, pos);
 
     const graveyardCentre: Position = {

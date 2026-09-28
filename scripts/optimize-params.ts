@@ -12,7 +12,8 @@
 // FITNESS = longest survival, then most ants: candidates are ranked
 // LEXICOGRAPHICALLY, not by a blended score — mean ticks survived first
 // (ties are common and expected once several candidates survive the full
-// window), mean average population as the tiebreak. See compareTrials.
+// window), mean average population as the tiebreak. See ga-core.ts's
+// makeCompareTrials.
 //
 // HOW THIS ACTUALLY MUTATES PARAMETERS: src/sim/params.ts holds plain
 // module-level constants, imported directly all over the codebase
@@ -34,11 +35,13 @@
 // restored to that original content instead — only a clean full run ends
 // with the best genome applied.
 //
-// Because every trial mutates the same on-disk file, trials CANNOT run
-// concurrently — each one must finish (or be killed) before the next
-// candidate's values are written. That's the main cost driver here; there's
-// no in-process parallelism to reach for without giving each trial its own
-// worktree/checkout, which is out of scope for this script.
+// Because every trial mutates the same on-disk file, trials in THIS script
+// CANNOT run concurrently — each one must finish (or be killed) before the
+// next candidate's values are written. For real parallelism (each trial
+// against its own isolated copy of src/sim, no shared file to collide on),
+// use optimize-params-parallel.ts instead — same search space and fitness
+// (both live in ga-core.ts), just a worker pool instead of one process at
+// a time.
 //
 // Run `npm run optimize-params -- --help` (or `-h`) for the full flag list.
 import { execFileSync } from "node:child_process";
@@ -46,6 +49,30 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { QUEEN_MAX_LIFESPAN_TICKS } from "../src/sim/params";
+import {
+    SEARCH_SPACE,
+    type Genome,
+    type TrialOutput,
+    type Scored,
+    type FlagSpec,
+    randomGenome,
+    mutate,
+    crossover,
+    applyGenome,
+    readGenomeFromText,
+    seedGenerationFromBest,
+    makeCompareTrials,
+    tournamentSelect,
+    formatTrial,
+    printGenomeTable,
+    printSearchSpaceTable,
+    printTable,
+    formatDuration,
+    parseArgs,
+    MIN_BIRTHS_TO_COUNT_AS_A_COLONY,
+    MAX_POPULATION_OVERSHOOT,
+} from "./ga-core";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PARAMS_PATH = path.resolve(__dirname, "../src/sim/params.ts");
@@ -56,40 +83,24 @@ const TRIAL_RUNNER_PATH = path.resolve(__dirname, "./trial-runner.ts");
 // shim" ENOENT and Node's arg-escaping shell warning), and no PATH lookup.
 const TSX_CLI_PATH = createRequire(import.meta.url).resolve("tsx/cli");
 
-// ---- CLI flags: `--flag value`, `--flag=value`, or the bare `-h` ----
-// hyphen/case-insensitive, so "--pop-size" and "--popsize" both match the
-// same key.
-function parseArgs(argv: string[]): Map<string, string> {
-    const args = new Map<string, string>();
-    for (let i = 0; i < argv.length; i++) {
-        const token = argv[i];
-        if (token === "-h") {
-            args.set("help", "true");
-            continue;
-        }
-        if (!token.startsWith("--")) continue;
-        const eq = token.indexOf("=");
-        const key = (eq === -1 ? token.slice(2) : token.slice(2, eq)).toLowerCase().replace(/-/g, "");
-        const value = eq === -1 ? (argv[i + 1] ?? "true") : token.slice(eq + 1);
-        args.set(key, value);
-    }
-    return args;
-}
-
 const ARGS = parseArgs(process.argv.slice(2));
 
 // One source of truth for every flag this script reads, so --help can never
 // drift out of sync with what option() actually does. `flag` is already
 // hyphen/case-normalized the same way parseArgs normalizes what it parses.
-type FlagSpec = { flag: string; env: string; default: string; help: string };
-
 const FLAGS: FlagSpec[] = [
     { flag: "popsize", env: "POP_SIZE", default: "16", help: "GA population size (candidates per generation)" },
     { flag: "generations", env: "GENERATIONS", default: "8", help: "number of generations to evolve" },
     { flag: "mutationrate", env: "MUTATION_RATE", default: "0.3", help: "per-gene chance a gene mutates when breeding (0-1)" },
     { flag: "mutationstrength", env: "MUTATION_STRENGTH", default: "0.25", help: "mutation size, as a fraction of each param's own [min,max] range" },
     { flag: "seeds", env: "TRIAL_SEEDS", default: "2,3,11", help: "comma-separated RNG seeds each trial's fitness is averaged over (forwarded to trial-runner.ts)" },
-    { flag: "maxticks", env: "TRIAL_MAX_TICKS", default: "5000", help: "tick cap per seed — surviving to this point counts as \"survived the full window\" (forwarded to trial-runner.ts)" },
+    // Defaults to the queen's own max lifespan: "the colony survives" means
+    // "it makes it through one queen's natural life without collapsing" —
+    // there's no queen-succession mechanic yet (colony/caste.ts is a stub),
+    // so a run that outlasts her is already the ceiling this sim can prove.
+    { flag: "maxticks", env: "TRIAL_MAX_TICKS", default: String(QUEEN_MAX_LIFESPAN_TICKS + 20000), help: "tick cap per seed — surviving to this point counts as \"survived the full window\" (forwarded to trial-runner.ts). Defaults to QUEEN_MAX_LIFESPAN_TICKS." },
+    { flag: "targetpop", env: "TARGET_AVG_POPULATION", default: "30", help: "average population a trial is scored against — closer wins, not just \"more\" (a boom that overshoots the food supply isn't healthier than a steady colony)" },
+    { flag: "seedcurrent", env: "SEED_FROM_CURRENT", default: "true", help: "include params.ts's current genome as a starting member of generation 1 instead of starting fully random — set to false to explore from scratch" },
 ];
 
 // CLI flag, then env var, then default — in that order.
@@ -97,19 +108,13 @@ function option(spec: FlagSpec): string {
     return ARGS.get(spec.flag) ?? process.env[spec.env] ?? spec.default;
 }
 
-function printTable(rows: string[][], indent = "  "): void {
-    const widths = rows[0].map((_, col) => Math.max(...rows.map((r) => r[col].length)));
-    for (const row of rows) {
-        console.log(indent + row.map((cell, col) => cell.padEnd(widths[col])).join("  "));
-    }
-}
-
 function printHelp(): void {
-    console.log("Search src/sim/params.ts for the longest-surviving, then most-populous, colony via a genetic algorithm.");
+    console.log("Search src/sim/params.ts for a colony that actually reproduces, survives longest (a queen's own lifespan by default), then holds population closest to --targetpop, via a genetic algorithm.");
     console.log("params.ts is left holding the best genome found when the run completes cleanly.\n");
     console.log("Usage:");
     console.log("  npm run optimize-params -- [flags]      (the -- forwards flags to the script instead of npm eating them)");
     console.log("  npx tsx scripts/optimize-params.ts [flags]\n");
+    console.log("For real parallelism, use optimize-params-parallel.ts instead (same flags, plus --workers).\n");
     console.log("Flags:");
     printTable([
         ["--help, -h", "", "", "show this help and exit"],
@@ -119,86 +124,13 @@ function printHelp(): void {
     console.log("  npm run optimize-params -- --popsize 12 --generations 10");
     console.log("  npm run optimize-params -- --seeds 2,3,11,13,4001 --max-ticks 8000\n");
     console.log(`Search space tuned (${SEARCH_SPACE.length} params): ${SEARCH_SPACE.map((s) => s.name).join(", ")}`);
-    console.log("(To add or remove which params get tuned, edit SEARCH_SPACE in this file.)");
+    console.log("(To add or remove which params get tuned, edit SEARCH_SPACE in ga-core.ts.)");
 }
-
-// ---- the search space: name, bounds, and whether it's an integer knob ----
-// The first batch (BASE_LAY_PROBABILITY..PILE_SPAWN_CHANCE) were the
-// least-settled dials in the ongoing boom-bust balance issue. The rest were
-// asked for explicitly: nurse aging, the whole pheromone trail channel, and
-// the whole alarm channel. Bounds are centered on whatever's currently in
-// params.ts, roughly halved/doubled — wide enough to actually search, not
-// so wide the GA spends its budget on obviously-broken corners of the
-// space. Add more entries here to widen the search further; each just
-// needs to be a plain `export const NAME = <number>;` line in params.ts.
-type ParamSpec = { name: string; min: number; max: number; integer?: boolean };
-
-const SEARCH_SPACE: ParamSpec[] = [
-    { name: "BASE_LAY_PROBABILITY", min: 0.05, max: 0.5 },
-    { name: "NURSE_BROOD_PER_NURSE", min: 3, max: 12, integer: true },
-    { name: "NURSE_LAY_HEADROOM", min: 1, max: 4 },
-    { name: "POPULATION_SOFT_TARGET", min: 15, max: 60, integer: true },
-    { name: "FOOD_TILE_CAPACITY", min: 200, max: 800, integer: true },
-    { name: "FOOD_PILE_START_AMOUNT", min: 50, max: 400, integer: true },
-    { name: "PILE_SPAWN_CHANCE", min: 0.03, max: 0.3 },
-    { name: "NURSE_AGE_THRESHOLD_TICKS", min: 50, max: 400, integer: true },
-    { name: "MAX_TRAIL", min: 100, max: 1000, integer: true },
-    { name: "EVAPORATION_FACTOR", min: 0.85, max: 0.99 },
-    { name: "MIN_TRAIL", min: 0.5, max: 10 },
-    { name: "SPREAD_FRAC", min: 0.1, max: 0.8 },
-    { name: "FOLLOW_THRESHOLD", min: 1, max: 30, integer: true },
-    { name: "DEPOSIT_AMOUNT", min: 10, max: 200, integer: true },
-    { name: "ALARM_MAX", min: 50, max: 500, integer: true },
-    { name: "ALARM_EVAPORATION_FACTOR", min: 0.5, max: 0.98 },
-    { name: "ALARM_DEPOSIT_AMOUNT", min: 20, max: 300, integer: true },
-    { name: "ALARM_SPREAD_FRAC", min: 0.1, max: 0.9 },
-    { name: "ALARM_FLEE_THRESHOLD", min: 5, max: 100, integer: true },
-    { name: "MAX_PILES", min: 10, max: 150, integer: true },
-
-    // ---- foraging memory ----
-    { name: "FORAGING_TRIP_FAILURE_TICKS", min: 50, max: 400, integer: true },
-    { name: "MAX_REMEMBERED", min: 1, max: 10, integer: true },
-    { name: "MEMORY_TTL_TICKS", min: 50, max: 1000, integer: true },
-    { name: "EMPTY_PATCH_TTL_TICKS", min: 50, max: 800, integer: true },
-    { name: "MAX_EMPTY_PATCHES_REMEMBERED", min: 1, max: 20, integer: true },
-
-    // ---- teaching & learned trust ----
-    { name: "PATCH_QUALITY_EMA_ALPHA", min: 0.05, max: 0.9 },
-    { name: "MAX_PREDATOR_SIGHTINGS", min: 1, max: 15, integer: true },
-    { name: "PREDATOR_SIGHTING_TTL_TICKS", min: 100, max: 1500, integer: true },
-    { name: "PATCH_QUALITY_RICHNESS_WEIGHT", min: 0.1, max: 5 },
-    { name: "PREDATOR_SIGHTING_RICHNESS_WEIGHT", min: 0.1, max: 5 },
-    { name: "ABSORB_MAX_TRANSFER", min: 1, max: 6, integer: true },
-    // Disjoint by construction (LEARNING_MIN max < LEARNING_BASELINE min <
-    // LEARNING_BASELINE max < LEARNING_MAX min), same trick MIN_TRAIL/
-    // MAX_TRAIL use above — otherwise crossover/mutation could produce a
-    // genome where reinforce()'s clamp(value, LEARNING_MIN, LEARNING_MAX)
-    // is nonsensical because LEARNING_MIN >= LEARNING_MAX.
-    { name: "LEARNING_MIN", min: 0.05, max: 0.4 },
-    { name: "LEARNING_BASELINE", min: 0.6, max: 1.4 },
-    { name: "LEARNING_MAX", min: 1.6, max: 5 },
-    { name: "REINFORCE_STEP", min: 0.01, max: 0.5 },
-    { name: "KNOWLEDGE_SHARE_CHANCE", min: 0.01, max: 0.6 },
-
-    // ---- colony-level decisions ----
-    { name: "DECISION_INTERVAL_TICKS", min: 100, max: 1000, integer: true },
-    { name: "DECISION_THRESHOLD", min: 0.3, max: 0.95 },
-    { name: "GRAVEYARD_THREAT_RADIUS", min: 5, max: 30, integer: true },
-    { name: "GRAVEYARD_THREAT_INCREMENT", min: 1, max: 5, integer: true },
-    { name: "GRAVEYARD_THREAT_DECAY", min: 0.9, max: 0.999 },
-    { name: "GRAVEYARD_THREAT_CAP", min: 50, max: 400, integer: true },
-    { name: "NURSERY_COLD_TEMP", min: 0, max: 15, integer: true },
-    { name: "NURSERY_COLD_SCALE", min: 2, max: 30, integer: true },
-    { name: "FOOD_STORE_TRAVEL_THRESHOLD", min: 10, max: 70, integer: true },
-    { name: "FOOD_STORE_TRAVEL_SCALE", min: 5, max: 50, integer: true },
-];
 
 if (ARGS.has("help")) {
     printHelp();
     process.exit(0);
 }
-
-type Genome = Record<string, number>;
 
 // ---- GA knobs ----
 const POP_SIZE = Number(option(FLAGS[0]));
@@ -206,60 +138,9 @@ const GENERATIONS = Number(option(FLAGS[1]));
 const ELITISM = Math.min(2, POP_SIZE - 1);
 const MUTATION_RATE = Number(option(FLAGS[2]));
 const MUTATION_STRENGTH = Number(option(FLAGS[3]));
+const TARGET_AVG_POPULATION = Number(option(FLAGS[6]));
 const TOURNAMENT_SIZE = 3;
-
-function randomInRange(min: number, max: number): number {
-    return min + Math.random() * (max - min);
-}
-
-function randomGenome(): Genome {
-    const genome: Genome = {};
-    for (const spec of SEARCH_SPACE) {
-        const raw = randomInRange(spec.min, spec.max);
-        genome[spec.name] = spec.integer ? Math.round(raw) : Number(raw.toFixed(4));
-    }
-    return genome;
-}
-
-function clamp(value: number, min: number, max: number): number {
-    return Math.max(min, Math.min(max, value));
-}
-
-function mutate(genome: Genome): Genome {
-    const next: Genome = { ...genome };
-    for (const spec of SEARCH_SPACE) {
-        if (Math.random() >= MUTATION_RATE) continue;
-        const range = spec.max - spec.min;
-        const delta = (Math.random() * 2 - 1) * range * MUTATION_STRENGTH;
-        const mutated = clamp(next[spec.name] + delta, spec.min, spec.max);
-        next[spec.name] = spec.integer ? Math.round(mutated) : Number(mutated.toFixed(4));
-    }
-    return next;
-}
-
-function crossover(a: Genome, b: Genome): Genome {
-    const child: Genome = {};
-    for (const spec of SEARCH_SPACE) {
-        child[spec.name] = Math.random() < 0.5 ? a[spec.name] : b[spec.name];
-    }
-    return child;
-}
-
-// ---- writing a genome into params.ts's text ----
-function applyGenome(paramsText: string, genome: Genome): string {
-    let next = paramsText;
-    for (const spec of SEARCH_SPACE) {
-        const re = new RegExp(`(export const ${spec.name} = )[0-9.]+(;)`);
-        if (!re.test(next)) {
-            throw new Error(`optimize-params: couldn't find "export const ${spec.name} = <number>;" in params.ts — did it get renamed?`);
-        }
-        next = next.replace(re, `$1${genome[spec.name]}$2`);
-    }
-    return next;
-}
-
-type TrialOutput = { meanTicksSurvived: number; meanAvgPopulation: number; survivedAll: boolean; maxTicks: number };
-type Scored = { genome: Genome; trial: TrialOutput };
+const compareTrials = makeCompareTrials(TARGET_AVG_POPULATION);
 
 // trial-runner.ts is a separate process and reads its own settings from
 // TRIAL_SEEDS/TRIAL_MAX_TICKS env vars (see that file) — --seeds/--max-ticks
@@ -271,51 +152,17 @@ function evaluateGenome(originalParamsText: string, genome: Genome): TrialOutput
         encoding: "utf8",
         env: {
             ...process.env,
-            ...(ARGS.has("seeds") ? { TRIAL_SEEDS: ARGS.get("seeds") } : {}),
-            ...(ARGS.has("maxticks") ? { TRIAL_MAX_TICKS: ARGS.get("maxticks") } : {}),
+            // Always forward the resolved value (flag, then env, then this
+            // script's own default), not just when --seeds/--maxticks was
+            // typed explicitly — otherwise trial-runner.ts falls back to ITS
+            // own hardcoded defaults (5000 ticks) the moment this script's
+            // default differs from that, silently ignoring the queen's
+            // lifespan default set above.
+            TRIAL_SEEDS: option(FLAGS[4]),
+            TRIAL_MAX_TICKS: option(FLAGS[5]),
         },
     });
     return JSON.parse(stdout.trim().split("\n").pop()!) as TrialOutput;
-}
-
-// Longest survival wins; ties (very common once several candidates survive
-// the whole window at maxTicks) fall to whichever kept more ants alive on
-// average. Deliberately NOT a blended score — a config that lasts longer
-// wins outright regardless of population, and only among equally-long
-// survivors does population size matter at all.
-function compareTrials(a: TrialOutput, b: TrialOutput): number {
-    if (a.meanTicksSurvived !== b.meanTicksSurvived) {
-        return b.meanTicksSurvived - a.meanTicksSurvived;
-    }
-    return b.meanAvgPopulation - a.meanAvgPopulation;
-}
-
-function tournamentSelect(scored: Scored[]): Genome {
-    let best: Scored | undefined;
-    for (let i = 0; i < TOURNAMENT_SIZE; i++) {
-        const candidate = scored[Math.floor(Math.random() * scored.length)];
-        if (best === undefined || compareTrials(candidate.trial, best.trial) < 0) best = candidate;
-    }
-    return best!.genome;
-}
-
-function formatTrial(trial: TrialOutput): string {
-    return `ticks=${trial.meanTicksSurvived.toFixed(0)}/${trial.maxTicks}  avgPop=${trial.meanAvgPopulation.toFixed(1)}  survivedAll=${trial.survivedAll}`;
-}
-
-function printGenomeTable(genome: Genome): void {
-    printTable(SEARCH_SPACE.map((spec) => [spec.name, `= ${genome[spec.name]}`, `[${spec.min}, ${spec.max}]`]), "    ");
-}
-
-function printSearchSpaceTable(): void {
-    printTable(SEARCH_SPACE.map((spec) => [spec.name, `[${spec.min}, ${spec.max}]`, spec.integer ? "integer" : "float"]), "    ");
-}
-
-function formatDuration(ms: number): string {
-    const totalSeconds = Math.round(ms / 1000);
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    return minutes > 0 ? `${minutes}m${seconds.toString().padStart(2, "0")}s` : `${seconds}s`;
 }
 
 // ---- main ----
@@ -342,15 +189,28 @@ async function main(): Promise<void> {
 
     console.log("=".repeat(78));
     console.log(`[optimize-params] population=${POP_SIZE}  generations=${GENERATIONS}  elitism=${ELITISM}  mutationRate=${MUTATION_RATE}  mutationStrength=${MUTATION_STRENGTH}`);
-    console.log(`[optimize-params] seeds=${option(FLAGS[4])}  maxTicks=${option(FLAGS[5])}`);
-    console.log(`[optimize-params] fitness: longest survival first, most ants (avg population) as the tiebreak.`);
+    console.log(`[optimize-params] seeds=${option(FLAGS[4])}  maxTicks=${option(FLAGS[5])}  targetAvgPopulation=${TARGET_AVG_POPULATION}`);
+    console.log(`[optimize-params] fitness: reproduced at all (>= ${MIN_BIRTHS_TO_COUNT_AS_A_COLONY} births) first, then not overshooting past ${TARGET_AVG_POPULATION * MAX_POPULATION_OVERSHOOT} avg population, then longest survival, then closest average population to ${TARGET_AVG_POPULATION} as the tiebreak.`);
     console.log(`[optimize-params] search space (${SEARCH_SPACE.length} params):`);
     printSearchSpaceTable();
     console.log(`[optimize-params] params.ts will be rewritten per-trial, then left holding the winner. Pre-run backup: ${BACKUP_PATH}`);
     console.log(`[optimize-params] run with --help for the flag list. Do not edit params.ts while this runs.`);
     console.log("=".repeat(78));
 
-    let population = Array.from({ length: POP_SIZE }, randomGenome);
+    // Seeded with the genome already sitting in params.ts instead of
+    // starting fully random — see optimize-params-parallel.ts's matching
+    // comment for why: otherwise every new run discards whatever a prior
+    // run (possibly much longer) already found. The WHOLE generation is
+    // built from it (slot 0 exact, every other slot a mutation of it), not
+    // just one slot alongside random genomes.
+    const seedFromCurrent = option(FLAGS[7]) !== "false";
+    const initialPopulation = seedFromCurrent
+        ? seedGenerationFromBest(POP_SIZE, readGenomeFromText(originalParamsText), MUTATION_RATE, MUTATION_STRENGTH)
+        : Array.from({ length: POP_SIZE }, randomGenome);
+    if (seedFromCurrent) {
+        console.log(`[optimize-params] seeding generation 1 from params.ts's current genome — slot 1 exact, the rest mutations of it (--seedcurrent=false for a fully random start).`);
+    }
+    let population = initialPopulation;
     let scored: Scored[] = [];
     let bestEver: Scored | undefined;
 
@@ -411,9 +271,9 @@ async function main(): Promise<void> {
         const elites = scored.slice(0, ELITISM).map((s) => s.genome);
         const offspring: Genome[] = [];
         while (elites.length + offspring.length < POP_SIZE) {
-            const parentA = tournamentSelect(scored);
-            const parentB = tournamentSelect(scored);
-            offspring.push(mutate(crossover(parentA, parentB)));
+            const parentA = tournamentSelect(scored, compareTrials, TOURNAMENT_SIZE);
+            const parentB = tournamentSelect(scored, compareTrials, TOURNAMENT_SIZE);
+            offspring.push(mutate(crossover(parentA, parentB), MUTATION_RATE, MUTATION_STRENGTH));
         }
         population = [...elites, ...offspring];
     }
