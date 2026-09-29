@@ -105,6 +105,23 @@ export function decide(ant: Ant, perception: Perception): Action {
         return perception.currentChamber === "FOOD_STORAGE" ? { type: "eat" } : { type: "goto", role: "FOOD_STORAGE" };
     }
 
+    // Rule 2b: a hungry nurse with an empty food store has no self-rescue —
+    // unlike a forager, decideNurse never checks hunger at all, so she'd
+    // just keep ferrying/tending straight to zero energy. Bug found in
+    // review: during a sustained food crunch this starves the nurses (the
+    // only ones tending brood) with no recourse, and the brood they drop
+    // goes untended and dies too. Borrow the forager's surface self-feeding
+    // fallback rather than inventing a nurse-specific one — she heads out,
+    // eats at a pile, and comes back once fed.
+    if (
+        perception.hungerRatio < HUNGER_THRESHOLD &&
+        ant.job === "NURSE" &&
+        perception.carrying.length === 0 &&
+        perception.foodStoreAmount === 0
+    ) {
+        return decideForager(ant, perception);
+    }
+
     // Rule 3: sleep — nest-only, unburdened, not mid-undertaking; a laden or
     // surface ant just runs its normal job logic and sleeps a tick or two
     // later once it's home and clear. Naps happen in a rest chamber

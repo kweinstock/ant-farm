@@ -93,7 +93,9 @@ const FLAGS: FlagSpec[] = [
     { flag: "generations", env: "GENERATIONS", default: "8", help: "number of generations to evolve" },
     { flag: "mutationrate", env: "MUTATION_RATE", default: "0.3", help: "per-gene chance a gene mutates when breeding (0-1)" },
     { flag: "mutationstrength", env: "MUTATION_STRENGTH", default: "0.25", help: "mutation size, as a fraction of each param's own [min,max] range" },
-    { flag: "seeds", env: "TRIAL_SEEDS", default: "2,3,11", help: "comma-separated RNG seeds each trial's fitness is averaged over (forwarded to trial-runner.ts)" },
+    // 12345 is the seed actually in use (print-sim.ts's default) — that's
+    // the trajectory that matters, not an arbitrary sample.
+    { flag: "seeds", env: "TRIAL_SEEDS", default: "12345", help: "comma-separated RNG seeds each trial's fitness is averaged over (forwarded to trial-runner.ts)" },
     // Defaults to the queen's own max lifespan: "the colony survives" means
     // "it makes it through one queen's natural life without collapsing" —
     // there's no queen-succession mechanic yet (colony/caste.ts is a stub),

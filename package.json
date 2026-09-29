@@ -14,6 +14,7 @@
     "deploy:testing": "npm run build && wrangler deploy --env testing",
     "test": "vitest run",
     "test:basic": "npx tsx scripts/print-sim.ts",
+    "diagnose-death": "npx tsx scripts/print-sim.ts --full",
     "optimize-params": "npx tsx scripts/optimize-params.ts",
     "optimize-params-parallel": "npx tsx scripts/optimize-params-parallel.ts"
   },

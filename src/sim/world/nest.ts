@@ -323,11 +323,14 @@ export function digTile(grid: Grid, nest: Nest, pos: Position, target: ChamberId
     tileChamber[getIndex(newGrid, pos.x, pos.y)] = chamberId;
 
 
-    const updatedChamber = chambers.find((chamber) => chamber.id === chamberId)!;
-    const distanceFields: Record<ChamberId, Int16Array> = {
-        ...nest.distanceFields,
-        [chamberId]: buildChamberField(newGrid, updatedChamber),
-    };
+    // Rebuild every chamber's field against the new grid, not just the one
+    // being dug — a newly-carved tile can shorten (or change) routes for any
+    // other chamber too, and carrying stale fields forward drifts further
+    // off with every dig over a long-running colony.
+    const distanceFields: Record<ChamberId, Int16Array> = {};
+    for (const chamber of chambers) {
+        distanceFields[chamber.id] = buildChamberField(newGrid, chamber);
+    }
 
     return { grid: newGrid, nest: { chambers, distanceFields, tileChamber } };
 }

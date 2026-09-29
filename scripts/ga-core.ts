@@ -17,7 +17,10 @@
 export type ParamSpec = { name: string; min: number; max: number; integer?: boolean };
 
 export const SEARCH_SPACE: ParamSpec[] = [
-    { name: "BASE_LAY_PROBABILITY", min: 0.02, max: 1 },
+    // Floor widened 0.02 -> 0.005: the seed-12345 diagnostic's genome sat
+    // at 0.0667, under 5% into the old [0.02,1] range — the same
+    // "pinned near a wall" signal the params below were widened for.
+    { name: "BASE_LAY_PROBABILITY", min: 0.005, max: 1 },
     // Both widened downward after a 151-trial run's best genome landed
     // exactly on the old floor for each — NURSE_BROOD_PER_NURSE=3 (old
     // floor) and POPULATION_SOFT_TARGET=15 (old floor), the same "pinned at
@@ -25,17 +28,33 @@ export const SEARCH_SPACE: ParamSpec[] = [
     // CHANCE gave before they were widened.
     { name: "NURSE_BROOD_PER_NURSE", min: 1, max: 12, integer: true },
     { name: "NURSE_LAY_HEADROOM", min: 1, max: 4 },
-    { name: "POPULATION_SOFT_TARGET", min: 5, max: 100, integer: true },
+    // Floor widened 5 -> 3: STARTER_WORKER_COUNT is 20, so a soft target of
+    // 15 (the seed-12345 genome's value, ~10% into the old [5,100] range)
+    // already sat BELOW the colony's own starting population — the taper
+    // was throttling laying from tick 0 before the colony had done
+    // anything to actually overshoot. See params.ts's own value, raised to
+    // 20 to match STARTER_WORKER_COUNT directly; widening the floor further
+    // down is for the search to explore below that starting point if it
+    // turns out to actually help, not because 5 itself was reached.
+    { name: "POPULATION_SOFT_TARGET", min: 3, max: 100, integer: true },
     { name: "FOOD_STORE_LAY_HALT_RATIO", min: 0.02, max: 0.4 },
     // Widened after two full runs both drove FOOD_TILE_CAPACITY, MAX_PILES,
     // and PILE_SPAWN_CHANCE straight to their old ceilings and still
     // couldn't sustain even a ~30-50 ant colony — the winning genome was
     // asking for more headroom than the search space allowed, not settling
-    // on a comfortable middle value.
-    { name: "FOOD_TILE_CAPACITY", min: 500, max: 7000, integer: true },
-    { name: "FOOD_PILE_START_AMOUNT", min: 50, max: 7000, integer: true },
+    // on a comfortable middle value. Ceiling raised again 7000 -> 10000
+    // after the seed-12345 genome's FOOD_PILE_START_AMOUNT sat at 6169,
+    // under 15% from the old ceiling; FOOD_TILE_CAPACITY's own ceiling
+    // moved the same amount to keep it able to actually hold that much
+    // (spawnFoodPiles caps a pile's amount at FOOD_TILE_CAPACITY).
+    { name: "FOOD_TILE_CAPACITY", min: 500, max: 10000, integer: true },
+    { name: "FOOD_PILE_START_AMOUNT", min: 50, max: 10000, integer: true },
+    // No ceiling change: 1 is a hard, physical bound on a probability, not
+    // an arbitrary search-space wall — nothing to widen past it.
     { name: "PILE_SPAWN_CHANCE", min: 0.03, max: 1 },
-    { name: "NURSE_AGE_THRESHOLD_TICKS", min: 50, max: 400, integer: true },
+    // Ceiling widened 400 -> 600: seed-12345's genome sat at 345, ~16% from
+    // the old ceiling.
+    { name: "NURSE_AGE_THRESHOLD_TICKS", min: 50, max: 600, integer: true },
     { name: "MAX_TRAIL", min: 100, max: 1000, integer: true },
     { name: "EVAPORATION_FACTOR", min: 0.85, max: 0.99 },
     { name: "MIN_TRAIL", min: 0.5, max: 10 },
@@ -43,7 +62,9 @@ export const SEARCH_SPACE: ParamSpec[] = [
     { name: "FOLLOW_THRESHOLD", min: 1, max: 30, integer: true },
     { name: "DEPOSIT_AMOUNT", min: 10, max: 200, integer: true },
     { name: "ALARM_MAX", min: 50, max: 500, integer: true },
-    { name: "ALARM_EVAPORATION_FACTOR", min: 0.5, max: 0.98 },
+    // Floor widened 0.5 -> 0.3: seed-12345's genome sat at 0.5712, under 5%
+    // into the old [0.5,0.98] range.
+    { name: "ALARM_EVAPORATION_FACTOR", min: 0.3, max: 0.98 },
     { name: "ALARM_DEPOSIT_AMOUNT", min: 20, max: 300, integer: true },
     { name: "ALARM_SPREAD_FRAC", min: 0.1, max: 0.9 },
     { name: "ALARM_FLEE_THRESHOLD", min: 5, max: 100, integer: true },
@@ -52,9 +73,19 @@ export const SEARCH_SPACE: ParamSpec[] = [
     // ---- foraging memory ----
     { name: "FORAGING_TRIP_FAILURE_TICKS", min: 50, max: 400, integer: true },
     { name: "MAX_REMEMBERED", min: 1, max: 10, integer: true },
-    { name: "MEMORY_TTL_TICKS", min: 50, max: 1000, integer: true },
+    // Floor widened 50 -> 10: seed-12345's genome sat at 73, under 3% into
+    // the old [50,1000] range — and that value was actually BELOW
+    // FORAGING_TRIP_FAILURE_TICKS (175), meaning a remembered food site
+    // couldn't reliably survive one full round trip back to it. params.ts's
+    // seed value raised to 250 (comfortably above the trip-failure
+    // threshold) for the same reason; the floor here stays low so the
+    // search can still go lower if that turns out to actually help, not
+    // because 50 itself was the wall being tested against.
+    { name: "MEMORY_TTL_TICKS", min: 10, max: 1000, integer: true },
     { name: "EMPTY_PATCH_TTL_TICKS", min: 50, max: 800, integer: true },
-    { name: "MAX_EMPTY_PATCHES_REMEMBERED", min: 1, max: 20, integer: true },
+    // Ceiling widened 20 -> 30: seed-12345's genome sat at 17, ~16% from
+    // the old ceiling.
+    { name: "MAX_EMPTY_PATCHES_REMEMBERED", min: 1, max: 30, integer: true },
 
     // ---- teaching & learned trust ----
     { name: "PATCH_QUALITY_EMA_ALPHA", min: 0.05, max: 0.9 },
@@ -82,7 +113,9 @@ export const SEARCH_SPACE: ParamSpec[] = [
     { name: "KNOWLEDGE_SHARE_CHANCE", min: 0.01, max: 0.6 },
 
     // ---- colony-level decisions ----
-    { name: "DECISION_INTERVAL_TICKS", min: 100, max: 1000, integer: true },
+    // Floor widened 100 -> 50: seed-12345's genome sat at 193, ~10% into
+    // the old [100,1000] range.
+    { name: "DECISION_INTERVAL_TICKS", min: 50, max: 1000, integer: true },
     // Widened downward for the same reason as above: the same 151-trial
     // run's best genome landed exactly on the old floor (0.3).
     { name: "DECISION_THRESHOLD", min: 0.05, max: 0.95 },
@@ -90,9 +123,15 @@ export const SEARCH_SPACE: ParamSpec[] = [
     { name: "GRAVEYARD_THREAT_INCREMENT", min: 1, max: 5, integer: true },
     { name: "GRAVEYARD_THREAT_DECAY", min: 0.9, max: 0.999 },
     { name: "GRAVEYARD_THREAT_CAP", min: 50, max: 400, integer: true },
-    { name: "NURSERY_COLD_TEMP", min: 0, max: 15, integer: true },
+    // Ceiling widened 15 -> 20: seed-12345's genome sat at 13, ~13% from
+    // the old ceiling. Still well under BASE_TEMP.SUMMER (28) plus the
+    // HEAT weather mod (+8), so a cold-expansion proposal still can't fire
+    // in genuinely warm conditions.
+    { name: "NURSERY_COLD_TEMP", min: 0, max: 20, integer: true },
     { name: "NURSERY_COLD_SCALE", min: 2, max: 30, integer: true },
-    { name: "FOOD_STORE_TRAVEL_THRESHOLD", min: 10, max: 70, integer: true },
+    // Floor widened 10 -> 5: seed-12345's genome sat at 16, exactly 10%
+    // into the old [10,70] range.
+    { name: "FOOD_STORE_TRAVEL_THRESHOLD", min: 5, max: 70, integer: true },
     { name: "FOOD_STORE_TRAVEL_SCALE", min: 5, max: 50, integer: true },
 ];
 

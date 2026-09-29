@@ -81,10 +81,18 @@ const FLAGS: FlagSpec[] = [
     { flag: "generations", env: "GENERATIONS", default: "8", help: "number of generations to evolve" },
     { flag: "mutationrate", env: "MUTATION_RATE", default: "0.3", help: "per-gene chance a gene mutates when breeding (0-1)" },
     { flag: "mutationstrength", env: "MUTATION_STRENGTH", default: "0.25", help: "mutation size, as a fraction of each param's own [min,max] range" },
-    { flag: "seeds", env: "TRIAL_SEEDS", default: "2,3,11", help: "comma-separated RNG seeds each trial's fitness is averaged over (forwarded to trial-runner.ts)" },
+    // 12345 is the seed actually in use (print-sim.ts's default) — that's
+    // the trajectory that matters, not an arbitrary sample.
+    { flag: "seeds", env: "TRIAL_SEEDS", default: "12345", help: "comma-separated RNG seeds each trial's fitness is averaged over (forwarded to trial-runner.ts)" },
     { flag: "maxticks", env: "TRIAL_MAX_TICKS", default: String(QUEEN_MAX_LIFESPAN_TICKS + 20000), help: "tick cap per seed — surviving to this point counts as \"survived the full window\" (forwarded to trial-runner.ts). Defaults to QUEEN_MAX_LIFESPAN_TICKS." },
     { flag: "targetpop", env: "TARGET_AVG_POPULATION", default: "30", help: "average population a trial is scored against — closer wins, not just \"more\"" },
-    { flag: "workers", env: "OPTIMIZE_WORKERS", default: String(Math.max(1, os.cpus().length - 1)), help: "trials to run concurrently, each against its own isolated sim copy. Defaults to (CPU cores - 1)." },
+    // Every core, not cores-1: this machine's CPU is dedicated to the
+    // search for the run's duration, and trial-runner.ts's workers are
+    // CPU-bound single-threaded Node processes (see this file's header) —
+    // leaving a core idle just means slower throughput, not headroom for
+    // anything else running concurrently. Override downward with --workers
+    // if the machine is doing other work at the same time.
+    { flag: "workers", env: "OPTIMIZE_WORKERS", default: String(Math.max(1, os.cpus().length)), help: "trials to run concurrently, each against its own isolated sim copy. Defaults to every CPU core." },
     { flag: "trialtimeout", env: "TRIAL_TIMEOUT_MINUTES", default: "900", help: "wall-clock cap per trial in minutes — a trial still running after this is killed and scored as failed, so one pathological genome can't stall a whole generation" },
     { flag: "seedcurrent", env: "SEED_FROM_CURRENT", default: "true", help: "include params.ts's current genome as a starting member of generation 1 instead of starting fully random — set to false to explore from scratch" },
 ];

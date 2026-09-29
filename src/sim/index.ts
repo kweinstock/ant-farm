@@ -81,7 +81,7 @@ import { createCorpse, ageCorpses, assignUndertakers } from "./corpses";
 import { evaporate } from "./pheromones";
 import { rng } from "./rng";
 import type { ColonyState } from "./state";
-import type { AntId } from "./ants/ant";
+import type { AntId, Caste, Job } from "./ants/ant";
 import { manhattanDistance, type Position } from "./world/grid";
 import { SURFACE_DEATH_CHANCE, WANDER_EXPOSURE, RAIN_EXPOSURE_MULT, WIND_EXPOSURE_MULT, RAIN_EVAPORATION_FACTOR, PREDATOR_STRIKE_CHANCE, ALARM_EVAPORATION_FACTOR, GRAVEYARD_THREAT_RADIUS, GRAVEYARD_THREAT_INCREMENT, GRAVEYARD_THREAT_DECAY, GRAVEYARD_THREAT_CAP } from "./params";
 import { seasonOf } from "./environment/season";
@@ -98,6 +98,10 @@ export type DeathEvent = {
     ageTicks: number;
     where: "nest" | "surface";
     cause: "oldAge" | "starvation" | "predator" | "cold" | "exposure";
+    caste: Caste;
+    // Only meaningful for a WORKER — the queen's own `job` field is an unused
+    // leftover of how she's constructed (ant.ts), never read for her.
+    job?: Job;
 };
 
 export type WeatherChangedEvent = { 
@@ -177,7 +181,7 @@ function killWorker(cs: ColonyState, dead: Parameters<typeof recordDeath>[2], ca
         ({ corpses, nextCorpseId } = recordDeath(cs.corpses, cs.nextCorpseId, dead));
     }
 
-    events.push({ kind: "death", antId: dead.id, ageTicks: dead.ageTicks, where: dead.location.where, cause });
+    events.push({ kind: "death", antId: dead.id, ageTicks: dead.ageTicks, where: dead.location.where, cause, caste: dead.caste, job: dead.job });
     return { ...cs, ants: nextAnts, corpses, nextCorpseId };
 }
 
@@ -333,6 +337,7 @@ function singleTick(state: ColonyState): TickResult {
                 ageTicks: queenResult.queen.ageTicks,
                 where: queenResult.queen.location.where,
                 cause: queenResult.deathCause ?? "oldAge",
+                caste: "QUEEN",
             });
         } else {
             nextAntsAfterQueen.set(currentState.queenId, queenResult.queen);

@@ -43,7 +43,10 @@ const { createInitialState } = await simImport("state.ts");
 const { step } = await simImport("index.ts");
 const { QUEEN_MAX_LIFESPAN_TICKS } = await simImport("params.ts");
 
-const SEEDS = (process.env.TRIAL_SEEDS ?? "2,3,11").split(",").map(Number);
+// 12345 is the seed actually in use (print-sim.ts's default) — that's the
+// trajectory that matters when this is run standalone, not an arbitrary
+// sample.
+const SEEDS = (process.env.TRIAL_SEEDS ?? "12345").split(",").map(Number);
 // Defaults to the queen's own max lifespan when run standalone (outside
 // optimize-params.ts, which always forwards its own resolved --maxticks) —
 // "survived" should mean "made it through one queen's natural life," not an

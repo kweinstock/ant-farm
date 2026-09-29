@@ -19,18 +19,66 @@ import { createInitialState } from "../src/sim/state";
 import { step } from "../src/sim";
 import { getDemography } from "../src/sim/colony/demography";
 import type { DeathEvent } from "../src/sim";
+import { QUEEN_MAX_LIFESPAN_TICKS } from "../src/sim/params";
 
-const seed = 12345;
+// CLI args, not env vars — `npm run` scripts on Windows go through cmd.exe
+// by default, where inline `VAR=value command` assignment doesn't work, so
+// args baked straight into the package.json script string are what stays
+// portable. --key=value or --key value both work; env vars are still read
+// as a fallback for ad-hoc runs from a POSIX shell.
+const argv = process.argv.slice(2);
+function argValue(flag: string): string | undefined {
+    const eq = argv.find((a) => a.startsWith(`--${flag}=`));
+    if (eq) return eq.slice(flag.length + 3);
+    const idx = argv.indexOf(`--${flag}`);
+    return idx !== -1 && idx + 1 < argv.length ? argv[idx + 1] : undefined;
+}
+// --full: the actual multi-million-tick diagnostic trial, same seed as the
+// default below (that's "the seed in code" trial-runner.ts's own trials also
+// use), run out to the queen's own max lifespan — same reasoning
+// trial-runner.ts's standalone default uses: "survived" should mean "made it
+// through one queen's natural life," not an arbitrary short smoke window.
+const FULL = argv.includes("--full");
+
+const seed = Number(argValue("seed") ?? process.env.SIM_SEED ?? 12345);
 
 // Raised from Phase 2's 1001 — that was sized for watching one ant's single
 // lifespan (500-1000 ticks). Population growth via egg -> larva -> pupa ->
 // adult (colony/brood.ts's stage durations) needs more runway than that to
-// show anything interesting happening.
-const MAX_TICKS = 20000;
+// show anything interesting happening. Overridable via --max-ticks (or
+// --full, for the real diagnostic run) — see HISTOGRAM_BUCKET_TICKS below,
+// that's the whole point of tracking deaths bucketed over time rather than
+// just a running cumulative total.
+const MAX_TICKS = Number(argValue("max-ticks") ?? process.env.SIM_MAX_TICKS ?? (FULL ? QUEEN_MAX_LIFESPAN_TICKS : 20000));
 
-const SUMMARY_INTERVAL_TICKS = 200;
+const SUMMARY_INTERVAL_TICKS = FULL ? 20000 : 200;
+
+// How wide a time bucket the death histogram groups into. Tied to
+// SUMMARY_INTERVAL_TICKS rather than a fraction of MAX_TICKS — bucketing by
+// MAX_TICKS/20 looks fine on paper but is useless the moment a run collapses
+// well short of the full window (a colony that goes extinct at tick 420k
+// against a 16.2M-tick --full run would dump its entire death history into
+// one row of a 810k-wide bucket, exactly the "just a cumulative total"
+// resolution this histogram exists to avoid). Tying it to the print
+// cadence instead means resolution always matches how granular the run
+// actually reads, regardless of how far it got.
+const HISTOGRAM_BUCKET_TICKS = Number(argValue("bucket-ticks") ?? process.env.SIM_HISTOGRAM_BUCKET_TICKS ?? SUMMARY_INTERVAL_TICKS);
 
 let state = createInitialState(seed);
+
+const CAUSES: DeathEvent["cause"][] = ["oldAge", "starvation", "predator", "cold", "exposure"];
+// "QUEEN" isn't split by job (see DeathEvent's comment — her `job` field is
+// unused); NURSE/FORAGER are the two worker jobs (ant.ts's Job type).
+const ROLES = ["QUEEN", "NURSE", "FORAGER"] as const;
+type Role = (typeof ROLES)[number];
+
+function roleOf(event: DeathEvent): Role {
+    return event.caste === "QUEEN" ? "QUEEN" : (event.job ?? "FORAGER");
+}
+
+function emptyHistogramRow(): Record<Role, number> {
+    return { QUEEN: 0, NURSE: 0, FORAGER: 0 };
+}
 
 const deathsByCause: Record<DeathEvent["cause"], number> = {
     oldAge: 0,
@@ -39,6 +87,59 @@ const deathsByCause: Record<DeathEvent["cause"], number> = {
     cold: 0,
     exposure: 0,
 };
+
+// cause -> role -> count, one entry per HISTOGRAM_BUCKET_TICKS-wide window —
+// lets the suggested diagnostic ("is nurse starvation driving the
+// collapse?") be read directly off which bucket it spikes in, rather than
+// inferred from population symptoms alone.
+const deathHistogram = new Map<number, Record<DeathEvent["cause"], Record<Role, number>>>();
+
+function bucketFor(tick: number): Record<DeathEvent["cause"], Record<Role, number>> {
+    const bucketIndex = Math.floor((tick - 1) / HISTOGRAM_BUCKET_TICKS);
+    let bucket = deathHistogram.get(bucketIndex);
+    if (!bucket) {
+        bucket = {
+            oldAge: emptyHistogramRow(),
+            starvation: emptyHistogramRow(),
+            predator: emptyHistogramRow(),
+            cold: emptyHistogramRow(),
+            exposure: emptyHistogramRow(),
+        };
+        deathHistogram.set(bucketIndex, bucket);
+    }
+    return bucket;
+}
+
+function printHistogram() {
+    console.log();
+    console.log(`Death histogram (${HISTOGRAM_BUCKET_TICKS}-tick buckets), cause x role:`);
+
+    const bucketIndices = Array.from(deathHistogram.keys()).sort((a, b) => a - b);
+    if (bucketIndices.length === 0) {
+        console.log("  (no deaths recorded)");
+        return;
+    }
+
+    // Only columns that saw at least one death anywhere in the run — most
+    // cause/role combos never fire (a queen never crosses the surface, so
+    // predator/exposure/QUEEN stay at zero all run) and printing all 15
+    // would bury the columns that actually matter.
+    const columns = CAUSES.flatMap((c) => ROLES.map((r) => ({ cause: c, role: r })))
+        .filter(({ cause, role }) => bucketIndices.some((i) => deathHistogram.get(i)![cause][role] > 0));
+
+    const rangeWidth = 22;
+    const colWidth = 14;
+    const header = `  ${"tick range".padEnd(rangeWidth)}` + columns.map(({ cause, role }) => `${cause}/${role}`.padStart(colWidth)).join("");
+    console.log(header);
+    for (const bucketIndex of bucketIndices) {
+        const bucket = deathHistogram.get(bucketIndex)!;
+        const rangeStart = bucketIndex * HISTOGRAM_BUCKET_TICKS + 1;
+        const rangeEnd = rangeStart + HISTOGRAM_BUCKET_TICKS - 1;
+        const range = `${rangeStart}-${rangeEnd}`.padEnd(rangeWidth);
+        const cells = columns.map(({ cause, role }) => bucket[cause][role].toString().padStart(colWidth)).join("");
+        console.log(`  ${range}${cells}`);
+    }
+}
 
 console.log(`Seed: ${seed}`);
 console.log();
@@ -50,6 +151,7 @@ for (let tick = 1; tick <= MAX_TICKS; tick++) {
     for (const event of result.events) {
         if (event.kind === "death") {
             deathsByCause[event.cause] += 1;
+            bucketFor(tick)[event.cause][roleOf(event)] += 1;
             if (event.antId === state.queenId) {
                 // state.queenId still points at her id even after she's
                 // removed from state.ants — this only tells us it WAS her
@@ -95,3 +197,5 @@ for (let tick = 1; tick <= MAX_TICKS; tick++) {
 
     await new Promise((resolve) => setTimeout(resolve, 0.1));
 }
+
+printHistogram();

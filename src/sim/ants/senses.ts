@@ -208,8 +208,15 @@ export function perceive(state: ColonyState, ant: Ant): Perception {
 
     const holePos = state.surface.holePos;
 
+    // Skipped once onFoodPileId is already set: decideForager checks
+    // onFoodPileId before ever reading nearestFoodPilePos in every branch
+    // (foraging.ts), so a forager standing on a pile never needs to know the
+    // nearest one — nearestPile() is O(state.surface.foodPiles.length), and
+    // with genomes routinely running hundreds of piles (see the isForaging
+    // comment below), skipping it for every already-on-a-pile forager avoids
+    // a full scan that was guaranteed to go unused.
     let nearestFoodPilePos: Position | undefined = undefined;
-    if (isForaging) {
+    if (isForaging && onFoodPileId === undefined) {
         const nearest = nearestPile(state.surface, pos);
         if (nearest !== undefined && manhattanDistance(nearest.pos, pos) <= SIGHT_RADIUS) {
             nearestFoodPilePos = nearest.pos;
