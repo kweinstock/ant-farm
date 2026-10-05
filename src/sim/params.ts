@@ -211,7 +211,7 @@ export const DUSK_START = 0.75; // fraction of the day at which dusk begins
 export const NIGHT_START = 0.85; // fraction of the day at which full night begins
 
 // ---- Calendar ----
-export const DAYS_PER_SEASON = 2; // days that make up one season (when sim starts 40)
+export const DAYS_PER_SEASON = 40; // days that make up one season
 export const DAYS_PER_YEAR = DAYS_PER_SEASON * 4; // days that make up one full year cycle
 
 // ---- Weather ----
