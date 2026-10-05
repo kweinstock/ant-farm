@@ -1,15 +1,19 @@
 // Public surface of the simulation engine. This is the ONLY file the Worker
 // imports from src/sim.
 //
-//   step(state, queuedInputs, dtTicks) -> { state, events }
+//   step(state, dtTicks) -> { state, events }
 //
 // Pure and deterministic: no Date.now(), no Math.random(), no I/O. All time comes
 // from dtTicks, all randomness from state.rngSeed (see rng.ts). Same inputs =>
 // same output, which is what lets the Durable Object replay elapsed ticks after
 // hibernation and what test/sim/determinism.test.ts asserts.
 //
-// Also re-exports: createInitialState, toSnapshot, diff, and the params object so
-// callers touch one module.
+// Also re-exports: createInitialState, toSnapshot. There is deliberately no
+// "diff" re-export — Diff (shared/protocol.ts) is computed by comparing two
+// toSnapshot() outputs in src/worker/broadcast.ts, not a sim-level function.
+// The params object is NOT re-exported — nothing outside src/sim currently
+// needs balance constants directly (src/web/config.ts is UI-only config,
+// separate from sim balance by design — see that file's own header comment).
 //
 // Tick order (implemented here, delegated to submodules):
 //   1. apply queued visitor inputs        (inputs.ts)
@@ -51,21 +55,6 @@
 //                                                            their own schedules alongside piles
 //   8. genetics + lineage bookkeeping     (genetics/*)      offspring traits, family-tree edges, extinction marks
 //   9. collect + return events
-//
-// PHASE 3b NOTE: steps 1-3 and 8 still don't exist. Steps 4 and 6 stay
-// combined into one per-worker loop below, same reasoning as before —
-// nothing yet needs a completed pass over all ants before resolving deaths.
-// The queen is still not part of that loop; she's handled entirely by
-// colony/queen.ts's tickQueen, as part of step 5. She also never touches
-// the surface, so nothing about this phase's location split applies to her.
-//
-// PHASE 3c NOTE: step 3.5 is new. It's deliberately its own step rather than
-// folded into the step-4 loop, because assignUndertakers needs to see ALL
-// workers and ALL corpses at once (it's a global proximity-weighted
-// assignment, not a per-ant decision) — the step-4 loop below processes one
-// worker at a time and couldn't compute that. The queen is never a
-// candidate (assignUndertakers filters to caste === "WORKER"), consistent
-// with her sitting outside the whole sense->decide->act loop already.
 import { ageAndMeter } from "./ants/lifecycle";
 import { perceive } from "./ants/senses";
 import { decide } from "./ants/behavior";
@@ -90,6 +79,7 @@ import { ambientTemp, tempAtDepth } from "./environment/temperature";
 import { advanceWeather, type WeatherKind } from "./environment/weather";
 import { advancePredator, predatorCanStrike, coldDeathChance } from "./environment/hazards";
 import type { EnvState } from "./state";
+export { createInitialState, toSnapshot, type ColonyState, type EnvState, type ClimateOverride } from "./state";
 
 
 export type DeathEvent = {

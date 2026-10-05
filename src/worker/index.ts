@@ -1,15 +1,36 @@
-// Worker entry point. Two handlers:
+// Worker entry point.
 //
-//   fetch(request, env, ctx)
-//     - CORS + static asset passthrough (env.ASSETS, the built src/web bundle)
-//     - route /ant-farm/api/* via router.ts
-//     - for the live stream and any state-mutating call: resolve the single
-//       Durable Object  id = env.COLONY.idFromName("global-colony")  and
-//       forward the request to its .fetch()
-//     - for read-only browsing (ant list/detail, lineage trees, pins, stats):
-//       hit D1 (env.DB) / KV (env.CACHE) directly — keeps the DO's hot path free
+//   export { ColonyDO }   required — wrangler.jsonc's durable_objects binding
+//                         names this class; it has to be a named export of
+//                         whatever file "main" points to, or the binding
+//                         can't find it.
 //
-//   scheduled(event, env, ctx)   -> delegates to cron.ts
+//   default.fetch(request, env, ctx)
+//     - the live WebSocket stream and (later) any state-mutating call:
+//       resolve the single Durable Object  id = env.COLONY.idFromName("global-colony")
+//       and forward the request to its own .fetch()
+//     - everything else: env.assets.fetch(request) — the built src/web bundle
 //
-// Bindings expected (see wrangler.jsonc): ASSETS, COLONY (Durable Object),
-// DB (D1), CACHE (KV, optional).
+// No REST router (/ant-farm/api/*) yet — pins/ants/lineage/stats endpoints
+// are Phase 16/17 scope; router.ts stays an untouched stub. No scheduled()
+// handler either — cron.ts's housekeeping (D1 pruning, hibernation-survival
+// pinging) needs D1, which isn't bound yet (no d1_databases block in
+// wrangler.jsonc until Phase 17) — dropped from this file rather than wired
+// up to nothing.
+export { ColonyDO } from "./colony-do";
+
+const COLONY_NAME = "global-colony";
+
+export default {
+    async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+        const url = new URL(request.url);
+
+        if (url.pathname === "/ant-farm/api/stream") {
+            const id = env.COLONY.idFromName(COLONY_NAME);
+            const stub = env.COLONY.get(id);
+            return stub.fetch(request);
+        }
+
+        return env.assets.fetch(request);
+    },
+} satisfies ExportedHandler<Env>;

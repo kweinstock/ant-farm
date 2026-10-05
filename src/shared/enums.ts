@@ -1,23 +1,20 @@
 // Shared enumerations — the vocabulary every layer agrees on.
 //
-// Imported by: src/sim/* (authoritative use), src/worker/* (validation),
-// src/web/* (rendering + UI labels). Keep this file free of logic and of any
-// runtime dependency so it is safe to import from the browser and the Worker.
-//
-// Contents:
-//   Caste        QUEEN | WORKER | SOLDIER | DRONE
-//   Job          FORAGER | NURSE | BUILDER | SOLDIER | UNDERTAKER | NEST_WORKER | IDLE
-//                (mostly age-based "temporal polyethism", but UNDERTAKER is
-//                 assigned dynamically from corpse load — see src/sim/corpses.ts)
-//   LifeStage    EGG | LARVA | PUPA | ADULT
-//   TileType     SOIL | TUNNEL | CHAMBER | WALL | EXIT   (nest cross-section)
-//   ChamberRole  QUEEN | NURSERY | FOOD_STORE | COMMONS | EXIT
-//                (the graveyard / midden is a SURFACE zone, not a chamber — see world/surface.ts)
-//   Space        NEST | SURFACE   (ant.location.where — the two coordinate spaces)
-//   Carrying     NONE | EGG | FOOD | CORPSE
-//   WeatherKind  CLEAR | RAIN | SNOW | HEAT | COLD_SNAP
-//   Season       SPRING | SUMMER | FALL | WINTER
-//   TimeOfDay    DAWN | DAY | DUSK | NIGHT
-//   PheromoneKind TRAIL | ALARM | RECRUIT
-//   EventKind    BIRTH | DEATH | LINEAGE_EXTINCT | QUEEN_DIED | FORAGE_SUCCESS
-//                | PREDATOR_STRIKE | WEATHER_CHANGED | NUPTIAL_FLIGHT
+// Re-exports the sim's own types instead of redeclaring them (a parallel
+// declaration is what caused this file to drift from the real sim in the
+// first place — see git history / the phase-13 planning notes). Type-only
+// re-exports erase completely at build time, so this stays free of runtime
+// logic and safe to import from both the browser and the Worker.
+
+export type { Caste, Job, AntId } from "../sim/ants/ant";
+export type { ChamberRole } from "../sim/world/nest";
+export type { BroodStage } from "../sim/colony/brood";
+export type { Season } from "../sim/environment/season";
+export type { WeatherKind } from "../sim/environment/weather";
+export type { TimeOfDay } from "../sim/environment/clock";
+
+// "Space" and "Carrying" were in the original stub's doc comment but don't
+// exist as named types anywhere in src/sim: location space is the inline
+// literal "nest" | "surface" on Ant.location.where, and there's no
+// "Carrying" enum — Ant just has carrying: BroodId[] and carryingFood:
+// number. Left out rather than invented.
