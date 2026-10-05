@@ -23,6 +23,7 @@ import type { Predator } from "./environment/hazards";
 import { ambientTemp } from "./environment/temperature";
 import type { WeatherKind } from "./environment/weather";
 import type { DigPlan } from "./colony/decisions";
+import type { AntDTO, BroodDTO, CorpseDTO, SnapshotDTO } from "../shared/protocol";
 
 export type EnvState = {
     timeOfDay: TimeOfDay;
@@ -146,5 +147,89 @@ export function createInitialState(seed: number, climateOverride?: ClimateOverri
             capacity: FOOD_STORE_CAP,
         },
         climateOverride,
+    };
+}
+
+// ---- Snapshot projection (PHASE 13) ----
+//
+// Converts a live ColonyState into the flat, JSON-safe SnapshotDTO defined in
+// shared/protocol.ts. This is what actually goes over the wire — never
+// JSON.stringify(state) itself, which would silently mangle `ants` (a Map)
+// and `nest.distanceFields` (Int16Array per chamber; also routing-internal,
+// not something the client renders, so it's dropped here rather than
+// projected).
+//
+// Deliberately naive/hand-rolled: rebuilds the full array every call, no
+// memoization. Fine for a projection that runs once per tick server-side
+// (src/worker/broadcast.ts calls it before and after each alarm's step() to
+// diff the two). A real binary encoding for DO storage is a separate
+// concern — see src/sim/serialize.ts's header note — and is Phase 14, not this.
+export function toSnapshot(state: ColonyState): SnapshotDTO {
+    const ants: AntDTO[] = [];
+    for (const ant of state.ants.values()) {
+        ants.push({
+            id: ant.id,
+            name: ant.name,
+            caste: ant.caste,
+            job: ant.job,
+            where: ant.location.where,
+            x: ant.location.pos.x,
+            y: ant.location.pos.y,
+            carryingFood: ant.carryingFood,
+            carryingBroodCount: ant.carrying.length,
+            energy: ant.energy,
+            ageTicks: ant.ageTicks,
+            asleep: ant.asleep,
+        });
+    }
+
+    const brood: BroodDTO[] = state.brood.map((b) => ({
+        id: b.id,
+        stage: b.stage,
+        x: b.position.x,
+        y: b.position.y,
+        carriedBy: b.carriedBy,
+    }));
+
+    const corpses: CorpseDTO[] = state.corpses.map((c) => ({
+        id: c.id,
+        where: c.location.where,
+        x: c.location.pos.x,
+        y: c.location.pos.y,
+        carriedBy: c.carriedBy,
+    }));
+
+    return {
+        seq: state.seq,
+        simTime: state.simTime,
+        queenId: state.queenId,
+        ants,
+        brood,
+        corpses,
+        foodPiles: state.surface.foodPiles.map((p) => ({
+            id: p.id,
+            x: p.pos.x,
+            y: p.pos.y,
+            amount: p.amount,
+            capacity: p.capacity,
+        })),
+        foodStore: { amount: state.foodStore.amount, capacity: state.foodStore.capacity },
+        env: {
+            season: state.env.season,
+            weather: state.env.weather.kind,
+            timeOfDay: state.env.timeOfDay,
+            ambientTemp: state.env.ambientTemp,
+            dayOfYear: state.env.dayOfYear,
+            phase: state.env.phase,
+            weatherTicksRemaining: state.env.weather.ticksRemaining,
+            weatherForecast: [...state.env.weather.forecast],
+            predator: state.env.predator
+                ? {
+                    x: state.env.predator.pos.x,
+                    y: state.env.predator.pos.y,
+                    huntingAntId: state.env.predator.huntingAntId,
+                }
+                : null,
+        },
     };
 }

@@ -6,9 +6,10 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": ["ES2022"],
+    "types": ["@cloudflare/vitest-pool-workers"],
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/web", "src/sim", "src/shared", "scripts", "vite.config.ts"]
+  "include": ["**/*.ts", "../../worker-configuration.d.ts"]
 }

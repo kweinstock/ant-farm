@@ -47,6 +47,9 @@ import { SOURCE, TICK_INTERVALS_MS } from "./config";
 import { startRenderLoop } from "./render/engine";
 import { mountViews } from "./ui/view-switch";
 import { mountControlPanel } from "./ui/control-panel";
+import { ColonyStreamClient, colonyStreamUrl } from "./net/socket";
+import { PROTOCOL_VERSION } from "../shared/constants";
+import { colonyStateFromSnapshot } from "./net/remote-state";
 
 const viewsContainer = document.getElementById("ant-farm-views");
 
@@ -208,5 +211,39 @@ if (SOURCE === "local") {
         updatePanel(state, stats);
     }, TICK_INTERVALS_MS);
 } else {
-    // Phase 6
+    // slots the local branch mutates above are mutated here instead — the
+    // render loop and control panel below neither know nor care which
+    // branch is feeding them.
+    //
+    // `baseState` supplies ONLY static geometry (grid/nest/surface shape)
+    // that never crosses the wire — see remote-state.ts's header for why
+    // that's safe. Everything else in every reconstructed frame is real
+    // network data.
+    const baseState = createInitialState(seed);
+
+    const client = new ColonyStreamClient(colonyStreamUrl(), {
+        onHello: (hello) => {
+            console.log(`[ant-farm] connected: protocol v${hello.protocolVersion}, colony "${hello.colonyId}"`);
+        },
+        onUpdate: (snapshot) => {
+            const stateBeforeThisUpdate = state;
+            state = colonyStateFromSnapshot(baseState, snapshot);
+            // No discrete SimEvents travel over the wire yet (Diff carries
+            // row-level upserts, not events — see protocol.ts), so
+            // deathsByCause/birthsTotal/etc. stay frozen at their initial
+            // values in stream mode; only the state-derived readouts
+            // (population, food, asleep fraction) update correctly here.
+            updateTuningStats(stats, state, []);
+            prevState = stateBeforeThisUpdate;
+            tickStartTime = performance.now();
+            updatePanel(state, stats);
+        },
+        onProtocolMismatch: (serverVersion) => {
+            console.error(`[ant-farm] protocol mismatch: client v${PROTOCOL_VERSION}, server v${serverVersion}. Reload to pick up the new client.`);
+        },
+        onClose: () => {
+            console.warn("[ant-farm] stream closed (no auto-reconnect yet — Phase 14)");
+        },
+    });
+    client.connect();
 }

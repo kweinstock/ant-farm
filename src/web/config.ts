@@ -9,7 +9,12 @@
 // ============================================================================
 
 // ---- Simulation source & timing ----
-export const SOURCE = "local" as const; // where ColonyState comes from: "local" runs step() in-browser; a future "remote" would poll a Durable Object
+// "stream" (default): renders the Durable Object's colony (net/socket.ts ->
+// net/remote-state.ts -> the same renderer). Needs the Worker running —
+// `npm run build && npm run dev:worker` locally, or the deployed site.
+// Plain `npm run dev` (vite only) has no /ant-farm/api/stream endpoint, so
+// switch this to "local" to run step() in the browser while using it.
+export const SOURCE: "local" | "stream" = "stream"; // where ColonyState comes from: "stream" = Durable Object over WebSocket, "local" = step() in-browser
 export const TICK_INTERVALS_MS = 200; // wall-clock ms between ticks when SOURCE is "local" (TICK_INTERVALS_MS = 100, DAY_LENGTH_TICKS=1000 ticks -> a ~100s day)
 
 // ---- Rendering ----
