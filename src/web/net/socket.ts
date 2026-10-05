@@ -8,7 +8,12 @@
 //     naturally Phase 14 work, since it overlaps with what persistence and
 //     hibernation-replay change about what a "gap" even means.
 import { isServerMessage, type Hello, type SnapshotDTO, type Diff } from "../../shared/protocol";
-import { PROTOCOL_VERSION } from "../../shared/constants";
+import { PROTOCOL_VERSION, TICK_MS } from "../../shared/constants";
+
+// A Batch delivers ~25 ticks at once and they play back one per TICK_MS. If
+// frames pile up (background tabs throttle timers to ~1/s), fast-forward
+// instead of falling further behind real time.
+const MAX_BACKLOG = 50;
 
 export interface ColonyStreamCallbacks {
     onHello?: (hello: Hello) => void;
@@ -55,6 +60,8 @@ export function colonyStreamUrl(): string {
 export class ColonyStreamClient {
     private ws: WebSocket | null = null;
     private current: SnapshotDTO | null = null;
+    private queue: Diff[] = [];
+    private playTimer: ReturnType<typeof setInterval> | null = null;
 
     constructor(private readonly url: string, private readonly callbacks: ColonyStreamCallbacks = {}) {}
 
@@ -70,6 +77,9 @@ export class ColonyStreamClient {
     }
 
     close(): void {
+        if (this.playTimer !== null) clearInterval(this.playTimer);
+        this.playTimer = null;
+        this.queue = [];
         this.ws?.close();
         this.ws = null;
     }
@@ -96,22 +106,38 @@ export class ColonyStreamClient {
 
         if (message.kind === "snapshot") {
             this.current = message.data;
+            this.queue = [];
             this.callbacks.onUpdate?.(this.current);
             return;
         }
 
+        if (!this.current) return;
+        this.queue.push(...message.frames);
+        if (this.playTimer === null) {
+            this.playTimer = setInterval(() => this.playNext(), TICK_MS);
+        }
+    }
+
+    private playNext(): void {
+        // Over the backlog limit: apply the oldest frames silently to catch up.
+        while (this.queue.length > MAX_BACKLOG) this.applyFrame(this.queue.shift()!, false);
+        const frame = this.queue.shift();
+        if (frame) this.applyFrame(frame, true); // empty queue: hold the last frame
+    }
+
+    private applyFrame(frame: Diff, notify: boolean): void {
         if (!this.current) return;
         // A diff is only valid on top of the exact snapshot it was computed
         // from. A mismatch means frames were missed or the server restarted
         // (in-memory colony resets to seq 0 on eviction this phase) —
         // applying it would silently corrupt the view, and there's no
         // resync request yet (Phase 14), so drop the connection instead.
-        if (message.baseSeq !== this.current.seq) {
-            console.warn(`[ant-farm] stream out of sync (have seq ${this.current.seq}, diff base ${message.baseSeq}) — closing`);
+        if (frame.baseSeq !== this.current.seq) {
+            console.warn(`[ant-farm] stream out of sync (have seq ${this.current.seq}, diff base ${frame.baseSeq}) — closing`);
             this.close();
             return;
         }
-        this.current = applyDiff(this.current, message);
-        this.callbacks.onUpdate?.(this.current);
+        this.current = applyDiff(this.current, frame);
+        if (notify) this.callbacks.onUpdate?.(this.current);
     }
 }

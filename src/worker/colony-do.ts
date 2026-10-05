@@ -4,32 +4,40 @@
 //
 // PHASE 13: in-memory only. No persistence.ts calls (that's Phase 14), so a
 // cold start / eviction always begins from createInitialState() with a fixed
-// seed — the colony rewinds to tick 0 rather than resuming. alarm() also
-// does NOT use worker/loop.ts's wall-clock catch-up logic (that file is
-// explicitly untouched this phase): with nothing persisted, there's nothing
-// meaningful to catch up from, so alarm() just advances exactly one sim tick
-// per firing and reschedules itself. Wall-clock replay after hibernation
-// becomes meaningful once Phase 14 adds real persistence.
+// seed — the colony rewinds to tick 0 rather than resuming.
+//
+// Ticking is batched: the sim still advances one tick per TICK_MS (200 ms) of
+// wall-clock time, but the object only wakes every ALARM_MS (5 s) — ~25 alarms
+// per minute-ish instead of 300 — to keep requests inside the free-tier
+// budget. Each alarm runs every tick that has elapsed (worker/loop.ts's
+// ticksToRun) and sends them to viewers as one Batch of per-tick Diffs, which
+// the client plays back at TICK_MS spacing. Replay after hibernation/eviction
+// (loading persisted state first) is still Phase 14.
 import { DurableObject } from "cloudflare:workers";
 import { createInitialState, step, toSnapshot, type ColonyState } from "../sim";
-import { TICK_MS, PROTOCOL_VERSION } from "../shared/constants";
-import type { Hello, Snapshot } from "../shared/protocol";
+import { TICK_MS, ALARM_MS, PROTOCOL_VERSION } from "../shared/constants";
+import type { Hello, Snapshot, Diff } from "../shared/protocol";
 import { registerConnection, unregisterConnection } from "./connections";
-import { broadcastDiff } from "./broadcast";
+import { broadcastBatch, computeDiff } from "./broadcast";
+import { ticksToRun } from "./loop";
 
 const COLONY_SEED = 12345;
 
 export class ColonyDO extends DurableObject<Env> {
     private colony: ColonyState;
+    // Wall-clock time the sim has been advanced up to. Only ever moves forward
+    // by whole ticks (never set to "now"), so rounding error can't build up.
+    private lastTickMs: number;
 
     constructor(ctx: DurableObjectState, env: Env) {
         super(ctx, env);
         this.colony = createInitialState(COLONY_SEED);
+        this.lastTickMs = Date.now();
 
         ctx.blockConcurrencyWhile(async () => {
             const existing = await ctx.storage.getAlarm();
             if (existing === null) {
-                await ctx.storage.setAlarm(Date.now() + TICK_MS);
+                await ctx.storage.setAlarm(Date.now() + ALARM_MS);
             }
         });
     }
@@ -83,14 +91,23 @@ export class ColonyDO extends DurableObject<Env> {
         // re-arm it. Reschedule no matter what; the error still propagates
         // to the runtime's logs.
         try {
-            const prevSnapshot = toSnapshot(this.colony);
+            // At least one tick, so an early or immediate alarm (the tests fire
+            // one right after construction) still advances the sim.
+            const ticks = Math.max(1, ticksToRun(Date.now(), this.lastTickMs));
+            this.lastTickMs += ticks * TICK_MS;
 
-            const result = step(this.colony, 1);
-            this.colony = result.state;
+            const frames: Diff[] = [];
+            let prev = toSnapshot(this.colony);
+            for (let i = 0; i < ticks; i++) {
+                this.colony = step(this.colony, 1).state;
+                const next = toSnapshot(this.colony);
+                frames.push(computeDiff(prev, next));
+                prev = next;
+            }
 
-            broadcastDiff(this.ctx, prevSnapshot, this.colony);
+            broadcastBatch(this.ctx, frames);
         } finally {
-            await this.ctx.storage.setAlarm(Date.now() + TICK_MS);
+            await this.ctx.storage.setAlarm(Date.now() + ALARM_MS);
         }
     }
     

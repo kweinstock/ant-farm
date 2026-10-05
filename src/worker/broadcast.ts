@@ -1,15 +1,15 @@
 // Turns tick output into per-connection network payloads:
-//   - compute a keyed Diff between the pre-tick and post-tick SnapshotDTO
-//   - send it to every live socket (ctx.getWebSockets() — the Hibernation
-//     API's own registry, not anything colony-do.ts tracks itself)
+//   - computeDiff: a keyed Diff between two consecutive SnapshotDTOs (one per
+//     tick; colony-do.ts's alarm builds one per tick it runs)
+//   - broadcastBatch: send all of an alarm's Diffs to every live socket as one
+//     Batch message (ctx.getWebSockets() — the Hibernation API's own registry,
+//     not anything colony-do.ts tracks itself)
 //   - update each socket's lastAckedSeq via connections.ts
 // No viewport filtering or slow-consumer dropping yet — both are explicitly
 // "optional"/future per the original stub; a flat broadcast-to-all is
 // enough ant count for this phase.
 
-import { type SnapshotDTO, type AntDTO, type BroodDTO, type CorpseDTO, type Diff, type FoodPileDTO } from "../shared/protocol";
-import type { ColonyState } from "../sim";
-import { toSnapshot } from "../sim";
+import { type SnapshotDTO, type AntDTO, type BroodDTO, type CorpseDTO, type Diff, type FoodPileDTO, type Batch } from "../shared/protocol";
 import { getConnectionMeta, setConnectionMeta } from "./connections";
 
 function keyedDiff<T extends { id: string }>(prev: T[], next: T[]): { upserted: T[]; removed: string[] } {
@@ -64,16 +64,17 @@ export function computeDiff(prev: SnapshotDTO, next: SnapshotDTO): Diff {
     };
 }
 
-export function broadcastDiff(ctx: DurableObjectState, prevSnapshot: SnapshotDTO, colony: ColonyState): void {
-    const nextSnapshot = toSnapshot(colony);
-    const diff = computeDiff(prevSnapshot, nextSnapshot);
-    const payload = JSON.stringify(diff);
+export function broadcastBatch(ctx: DurableObjectState, frames: Diff[]): void {
+    if (frames.length === 0) return;
+    const batch: Batch = { kind: "batch", frames };
+    const payload = JSON.stringify(batch);
+    const lastSeq = frames[frames.length - 1].seq;
 
     for (const ws of ctx.getWebSockets()) {
         try {
             ws.send(payload);
-            const meta = getConnectionMeta(ws) ?? { lastAckedSeq: prevSnapshot.seq };
-            setConnectionMeta(ws, { ...meta, lastAckedSeq: nextSnapshot.seq });
+            const meta = getConnectionMeta(ws) ?? { lastAckedSeq: frames[0].baseSeq };
+            setConnectionMeta(ws, { ...meta, lastAckedSeq: lastSeq });
         } catch {
             // A broken/closing socket throwing here isn't ours to handle —
             // the Hibernation API drops it from getWebSockets() on its own;

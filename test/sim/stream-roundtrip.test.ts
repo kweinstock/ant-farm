@@ -48,4 +48,27 @@ describe("stream protocol round trip", () => {
             expect(normalize(client)).toEqual(normalize(JSON.parse(JSON.stringify(next))));
         }
     });
+
+    it("a batch of consecutive frames applied in order reproduces the final snapshot", () => {
+        let state = createInitialState(12345);
+        let client = toSnapshot(state);
+        let prev = client;
+        const frames = [];
+        for (let i = 0; i < 25; i++) {
+            state = step(state, 1).state;
+            const next = toSnapshot(state);
+            frames.push(computeDiff(prev, next));
+            prev = next;
+        }
+
+        // Frames chain: each one starts where the previous one ended.
+        for (let i = 1; i < frames.length; i++) {
+            expect(frames[i].baseSeq).toBe(frames[i - 1].seq);
+        }
+
+        // Through JSON, as a real Batch travels.
+        const wire = JSON.parse(JSON.stringify({ kind: "batch", frames })) as { frames: typeof frames };
+        for (const frame of wire.frames) client = applyDiff(client, frame);
+        expect(normalize(client)).toEqual(normalize(JSON.parse(JSON.stringify(prev))));
+    });
 });

@@ -109,12 +109,19 @@ export interface Diff {
     env?: SnapshotEnvDTO;
 }
 
-export type ServerMessage = Hello | Snapshot | Diff;
+// Every tick that ran in one alarm, in order. Each frame is a normal Diff and
+// chains off the previous one (frames[i].seq === frames[i+1].baseSeq).
+export interface Batch {
+    kind: "batch";
+    frames: Diff[];
+}
+
+export type ServerMessage = Hello | Snapshot | Batch;
 
 export function isServerMessage(value: unknown): value is ServerMessage {
     if (typeof value !== "object" || value === null || !("kind" in value)) return false;
     const kind = (value as { kind: unknown }).kind;
-    return kind === "hello" || kind === "snapshot" || kind === "diff";
+    return kind === "hello" || kind === "snapshot" || kind === "batch";
 }
 
 // ---- Not yet defined this phase ----
