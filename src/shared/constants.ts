@@ -9,7 +9,7 @@ export const MAX_CATCHUP_TICKS = 100; // cap on ticks per WATCHED alarm: 4x the 
 export const MAX_RUN_TICKS = 6000; // most ticks one invocation may run: an idle alarm, or the catch-up when a viewer connects. Sized to the CPU limit with a wide margin; raise it after measuring CPU per tick on Cloudflare.
 export const IDLE_ALARM_MS = (MAX_RUN_TICKS - MAX_CATCHUP_TICKS) * TICK_MS; // gap between alarms with nobody watching (~19.7 min). Deliberately shorter than MAX_RUN_TICKS covers, so no remainder builds up between alarms.
 export const SAVE_EVERY_TICKS = 300; // while watched, persist the colony every 300 ticks (~1 min of colony time). Idle alarms always save.
-export const PROTOCOL_VERSION = 3; // bumped whenever protocol.ts message shapes change; client reconnects on mismatch
+export const PROTOCOL_VERSION = 5; // bumped whenever protocol.ts message shapes change; client reconnects on mismatch
 
 // ---- Not yet consumed — later phases ----
 // SNAPSHOT_FULL_EVERY  send a full Snapshot instead of a Diff every N

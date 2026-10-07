@@ -180,6 +180,8 @@ export function toSnapshot(state: ColonyState): SnapshotDTO {
             energy: ant.energy,
             ageTicks: ant.ageTicks,
             asleep: ant.asleep,
+            lifespanTicks: ant.lifespanTicks,
+            undertaking: ant.undertaking?.corpseId,
         });
     }
 
@@ -214,6 +216,7 @@ export function toSnapshot(state: ColonyState): SnapshotDTO {
             capacity: p.capacity,
         })),
         foodStore: { amount: state.foodStore.amount, capacity: state.foodStore.capacity },
+        graveyard: { ...state.surface.graveyard },
         env: {
             season: state.env.season,
             weather: state.env.weather.kind,

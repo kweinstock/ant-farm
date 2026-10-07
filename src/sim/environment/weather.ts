@@ -40,6 +40,22 @@ function argmaxKind(row: Record<WeatherKind, number>): WeatherKind {
     return best;
 }
 
+// What the weather could turn into when the current spell ends, with the real
+// odds (the same row advanceWeather rolls against), most likely first. Display
+// only: the sim never calls this, so it can't affect determinism. This is what
+// the dashboard shows instead of `forecast`, which is just the single most
+// likely kind repeated (CLEAR -> CLEAR -> CLEAR almost always) and doesn't
+// predict the actual outcome, since that's a random roll.
+export function weatherOutlook(season: Season, kind: WeatherKind): { kind: WeatherKind; probability: number }[] {
+    const row = WEATHER_MATRIX[season][kind];
+    const total = KIND_ORDER.reduce((sum, k) => sum + row[k], 0);
+    if (total <= 0) return [];
+    return KIND_ORDER
+        .filter((k) => row[k] > 0)
+        .map((k) => ({ kind: k, probability: row[k] / total }))
+        .sort((a, b) => b.probability - a.probability);
+}
+
 function buildForecast(season: Season, fromKind: WeatherKind): WeatherKind[] {
     const forecast: WeatherKind[] = [];
     let kind = fromKind;

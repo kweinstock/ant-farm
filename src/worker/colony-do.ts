@@ -25,6 +25,8 @@ import { registerConnection, unregisterConnection } from "./connections";
 import { broadcastBatch, computeDiff } from "./broadcast";
 import { ticksToRun, replayStartMs } from "./loop";
 import { loadSnapshot, saveSnapshot } from "./persistence";
+import { emptyTally, addTick, statEvents, type Tally } from "../shared/tally";
+import { encodePheromones, encodeNest } from "../shared/wire-world";
 
 const COLONY_SEED = 12345;
 
@@ -36,6 +38,10 @@ export class ColonyDO extends DurableObject<Env> {
     // by whole ticks (never set to "now"), so rounding error can't build up.
     private lastTickMs!: number;
     private ticksSinceSave = 0;
+    // Lifetime counters (births, deaths by cause, trips, strikes, food delivered).
+    // Advanced on every tick we run, including idle and replayed ones, and saved
+    // with the colony so the totals survive an eviction.
+    private tally: Tally = emptyTally();
 
     constructor(ctx: DurableObjectState, env: Env) {
         super(ctx, env);
@@ -44,6 +50,7 @@ export class ColonyDO extends DurableObject<Env> {
             const saved = await loadSnapshot(ctx.storage);
             if (saved) {
                 this.colony = saved.state;
+                this.tally = saved.tally;
                 this.lastTickMs = replayStartMs(saved.lastTickMs, Date.now());
             } else {
                 this.colony = createInitialState(COLONY_SEED);
@@ -126,7 +133,10 @@ export class ColonyDO extends DurableObject<Env> {
         };
         ws.send(JSON.stringify(hello));
 
-        const snapshot: Snapshot = {kind: "snapshot", data: toSnapshot(this.colony)};
+        // Pheromones and the nest layout aren't part of toSnapshot (see protocol.ts), so a
+        // new viewer gets them here, once; after that they arrive on frames.
+        const data = { ...toSnapshot(this.colony), pheromones: encodePheromones(this.colony), nest: encodeNest(this.colony) };
+        const snapshot: Snapshot = {kind: "snapshot", data, tally: this.tally};
         ws.send(JSON.stringify(snapshot));
     }
 
@@ -168,20 +178,33 @@ export class ColonyDO extends DurableObject<Env> {
         const frames: Diff[] = [];
         let prev = collectFrames ? toSnapshot(this.colony) : null;
         for (let i = 0; i < ticks; i++) {
-            this.colony = step(this.colony, 1).state;
+            const foodBefore = this.colony.foodStore.amount;
+            const nestBefore = this.colony.nest;
+            const result = step(this.colony, 1);
+            this.colony = result.state;
+            addTick(this.tally, result.events, foodBefore, this.colony.foodStore.amount);
             if (prev) {
                 const next = toSnapshot(this.colony);
-                frames.push(computeDiff(prev, next));
+                const frame = computeDiff(prev, next);
+                const events = statEvents(result.events);
+                if (events.length > 0) frame.events = events;
+                // digTile builds a new nest object, so a changed reference means the
+                // layout changed this tick (a new chamber tile was finished).
+                if (this.colony.nest !== nestBefore) frame.nest = encodeNest(this.colony);
+                frames.push(frame);
                 prev = next;
             }
         }
+        // Pheromones change every tick, but an overlay and a dashboard count only need
+        // a refresh per batch: attach the end-of-batch state to the last frame.
+        if (frames.length > 0) frames[frames.length - 1].pheromones = encodePheromones(this.colony);
         this.lastTickMs += ticks * TICK_MS;
         this.ticksSinceSave += ticks;
         return frames;
     }
 
     private async save(): Promise<void> {
-        await saveSnapshot(this.ctx.storage, this.colony, this.lastTickMs);
+        await saveSnapshot(this.ctx.storage, this.colony, this.lastTickMs, this.tally);
         this.ticksSinceSave = 0;
     }
     

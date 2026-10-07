@@ -50,6 +50,7 @@ import { mountControlPanel } from "./ui/control-panel";
 import { ColonyStreamClient, colonyStreamUrl } from "./net/socket";
 import { PROTOCOL_VERSION } from "../shared/constants";
 import { colonyStateFromSnapshot } from "./net/remote-state";
+import type { Tally } from "../shared/tally";
 
 const viewsContainer = document.getElementById("ant-farm-views");
 
@@ -115,6 +116,23 @@ function createTuningStats(initial: ColonyState): TuningStats {
         asleepFraction: initialFraction,
         peakAsAsleepFraction: initialFraction,
     };
+}
+
+// Stream mode only: start the cumulative counters from the colony's lifetime
+// totals (sent with every Snapshot — connect, or a resync after a drop), so a
+// viewer who opens the page late sees the real numbers, not "0". Frames'
+// events keep them current from there via updateTuningStats. lastFoodAmount is
+// reset so the jump to the snapshot's store level doesn't count as a delivery.
+function applyTally(stats: TuningStats, tally: Tally, state: ColonyState): void {
+    stats.birthsTotal = tally.births;
+    stats.deathsTotal = tally.deathsTotal;
+    stats.deathsByCause = { ...tally.deathsByCause };
+    stats.deathsByLocation = { ...tally.deathsByLocation };
+    stats.forageDepartsTotal = tally.forageDeparts;
+    stats.predatorStrikesTotal = tally.predatorStrikes;
+    stats.foodDeliveredTotal = tally.foodDelivered;
+    stats.lastFoodAmount = state.foodStore.amount;
+    stats.tripDepartedAt.clear(); // a trip we only saw the start of before a resync can't be timed
 }
 
 // Mutates `stats` in place — see the header note on why that's fine here.
@@ -225,15 +243,13 @@ if (SOURCE === "local") {
         onHello: (hello) => {
             console.log(`[ant-farm] connected: protocol v${hello.protocolVersion}, colony "${hello.colonyId}"`);
         },
-        onUpdate: (snapshot) => {
+        onUpdate: (snapshot, events, tally) => {
             const stateBeforeThisUpdate = state;
             state = colonyStateFromSnapshot(baseState, snapshot);
-            // No discrete SimEvents travel over the wire yet (Diff carries
-            // row-level upserts, not events — see protocol.ts), so
-            // deathsByCause/birthsTotal/etc. stay frozen at their initial
-            // values in stream mode; only the state-derived readouts
-            // (population, food, asleep fraction) update correctly here.
-            updateTuningStats(stats, state, []);
+            // Snapshot (connect / resync): start the cumulative counters from the
+            // colony's lifetime totals. Frames: their events keep counting.
+            if (tally) applyTally(stats, tally, state);
+            updateTuningStats(stats, state, events);
             prevState = stateBeforeThisUpdate;
             tickStartTime = performance.now();
             updatePanel(state, stats);

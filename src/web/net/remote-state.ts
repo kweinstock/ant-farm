@@ -8,33 +8,26 @@
 // mode can hand the exact same ColonyState shape to the exact same render
 // code "local" mode already uses, with zero changes to any render/*.ts file.
 //
-// What's fabricated vs real, explicitly:
-//   - ants/brood/corpses/foodPiles/foodStore/env/seq/simTime/queenId: REAL,
-//     taken directly from the snapshot every call.
-//   - grid/nest/surface.grid/surface.holePos/surface.graveyard/surface.patches:
-//     NOT real network data — carried over unchanged from `base`, a ColonyState
-//     built once locally with createInitialState(). This is safe ONLY because
-//     createStarterNest()/createSurface() take no seed and are purely a
-//     function of GRID_WIDTH/HEIGHT/SURFACE_WIDTH/HEIGHT — the same fixed
-//     dimensions on client and server — so this geometry is identical to the
-//     server's regardless of which "base" built it.
-//   - env.predator, weather ticksRemaining/forecast: REAL (added to the wire
-//     in protocol v2 because the surface view and dashboard read them).
-//   - env.graveyardThreat, and anything digging-related
-//     (state.nest's chambers growing over time): STALE. Nest/grid were
-//     deliberately left out of the wire protocol as routing-internal (see
-//     state.ts's toSnapshot header), so a colony that digs new chambers while
-//     you're connected in stream mode will not visually grow here. That's a
-//     real, known limitation, not an oversight — closing it means putting
-//     nest/grid changes on the wire, which is its own, larger decision.
-//   - Ant fields never read by the renderer (lifespanTicks, wakeAt,
-//     ticksAwake, sleepPhase, spookedUntil, memory) are filled with inert
-//     placeholders (0 / emptyMemory()). Verified by grep against every
-//     render/*.ts file that none of these are read in the render path. If a
-//     future feature (a tooltip, an inspector panel) starts reading one of
-//     these off state.ants in stream mode, it will silently get a wrong
-//     placeholder instead of an error — that's the real cost of this
-//     approach, worth remembering before building on top of it.
+// What's real vs a placeholder, explicitly:
+//   - REAL, from the wire every frame: ants (incl. lifespan and the undertaking
+//     flag), brood, corpses (incl. carriedBy), food piles and store, seq/simTime,
+//     env (incl. predator, weather timing), and the surface graveyard rect.
+//   - REAL, cached per DTO: the nest layout (tiles + chambers; the distance fields
+//     and tile lookup are rebuilt locally) and the pheromone trail/alarm layers.
+//     The nest arrives with the snapshot and again whenever a dig changes it; the
+//     pheromones arrive with each batch's last frame, so the overlay refreshes
+//     every few seconds, not every tick.
+//   - STILL TAKEN FROM `base` (a ColonyState built once locally with
+//     createInitialState()): surface.grid / holePos / patches, which never change
+//     at runtime and are pure functions of the fixed grid dimensions, and
+//     env.graveyardThreat, which nothing in the render path reads.
+//   - Ant fields nothing in the render path reads (wakeAt, ticksAwake, sleepPhase,
+//     spookedUntil, memory, digging) and brood/corpse internals (progressTicks,
+//     lastTendedTick, ageTicks) are inert placeholders (0 / emptyMemory()).
+//     test/sim/stream-parity.test.ts compares the dashboard built from a real
+//     state with the same state after a trip through the wire, so a readout that
+//     starts depending on one of these shows up as a failing test instead of a
+//     silently wrong number.
 import type { ColonyState } from "../../sim/state";
 import type { Ant, AntId } from "../../sim/ants/ant";
 import { emptyMemory } from "../../sim/ants/memory";
@@ -42,7 +35,45 @@ import type { Brood, BroodId } from "../../sim/colony/brood";
 import type { Corpse } from "../../sim/corpses";
 import type { FoodPile } from "../../sim/world/surface";
 import type { Predator } from "../../sim/environment/hazards";
-import type { SnapshotDTO, PredatorDTO } from "../../shared/protocol";
+import type { SnapshotDTO, PredatorDTO, NestDTO, PheromonesDTO } from "../../shared/protocol";
+import type { Grid } from "../../sim/world/grid";
+import type { Nest } from "../../sim/world/nest";
+import { nestFromChambers } from "../../sim/world/nest";
+import type { TrailField } from "../../sim/pheromones";
+import { decodeNestTiles, decodeSparse } from "../../shared/wire-world";
+
+// The nest layout and the pheromone layers are decoded into fresh typed arrays /
+// BFS fields, which is real work (a dozen flood fills for the nest). They only
+// change when a new DTO arrives (applyDiff carries the same object forward
+// otherwise), so decode once per DTO and hand back the same objects every frame.
+// The renderer relies on that too: a stable `state.nest` means "layout unchanged".
+const nestCache = new WeakMap<NestDTO, { grid: Grid; nest: Nest }>();
+const pheromoneCache = new WeakMap<PheromonesDTO, { trail: TrailField; alarm: TrailField }>();
+
+function nestFor(base: ColonyState, dto: NestDTO | undefined): { grid: Grid; nest: Nest } {
+    if (!dto) return { grid: base.grid, nest: base.nest };
+    let cached = nestCache.get(dto);
+    if (!cached) {
+        const grid: Grid = { ...base.grid, tiles: decodeNestTiles(dto.tiles) };
+        cached = { grid, nest: nestFromChambers(grid, dto.chambers) };
+        nestCache.set(dto, cached);
+    }
+    return cached;
+}
+
+function pheromonesFor(base: ColonyState, dto: PheromonesDTO | undefined): { trail: TrailField; alarm: TrailField } {
+    if (!dto) return { trail: base.surface.trail, alarm: base.surface.alarm };
+    let cached = pheromoneCache.get(dto);
+    if (!cached) {
+        const { trail, alarm } = base.surface;
+        cached = {
+            trail: { ...trail, cells: decodeSparse(dto.trail, trail.cells.length) },
+            alarm: { ...alarm, cells: decodeSparse(dto.alarm, alarm.cells.length) },
+        };
+        pheromoneCache.set(dto, cached);
+    }
+    return cached;
+}
 
 // Only pos/huntingAntId are read by the renderer (surface-view.ts,
 // dashboard-stats.ts); the AI-internal fields are inert placeholders.
@@ -75,7 +106,8 @@ export function colonyStateFromSnapshot(base: ColonyState, snapshot: SnapshotDTO
             location: { where: dto.where, pos: { x: dto.x, y: dto.y } },
             energy: dto.energy,
             ageTicks: dto.ageTicks,
-            lifespanTicks: 0,
+            lifespanTicks: dto.lifespanTicks,
+            undertaking: dto.undertaking ? { corpseId: dto.undertaking } : undefined,
             asleep: dto.asleep,
             wakeAt: 0,
             ticksAwake: 0,
@@ -108,8 +140,13 @@ export function colonyStateFromSnapshot(base: ColonyState, snapshot: SnapshotDTO
         ageTicks: 0,
     }));
 
+    const { grid, nest } = nestFor(base, snapshot.nest);
+    const { trail, alarm } = pheromonesFor(base, snapshot.pheromones);
+
     return {
         ...base,
+        grid,
+        nest,
         seq: snapshot.seq,
         simTime: snapshot.simTime,
         queenId: snapshot.queenId,
@@ -131,6 +168,6 @@ export function colonyStateFromSnapshot(base: ColonyState, snapshot: SnapshotDTO
             },
             predator: snapshot.env.predator ? predatorFromDTO(snapshot.env.predator, base.env.predator) : null,
         },
-        surface: { ...base.surface, foodPiles },
+        surface: { ...base.surface, foodPiles, graveyard: { ...snapshot.graveyard }, trail, alarm },
     };
 }

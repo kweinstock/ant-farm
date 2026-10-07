@@ -11,6 +11,7 @@ import type { ColonyState } from "../../sim/state";
 import type { TuningStats } from "../main";
 import { allTilesOf, chamberAt } from "../../sim/world/nest";
 import { corpseNeedsUndertaker } from "../../sim/corpses";
+import { weatherOutlook } from "../../sim/environment/weather";
 import {
     HUNGER_THRESHOLD,
     MAX_ENERGY,
@@ -188,13 +189,16 @@ export function buildStatsSections(state: ColonyState, stats: TuningStats): Stat
     // ---- Environment ----
     const env = state.env;
     const coldActive = env.ambientTemp < COLD_DEATH_TEMP;
-    const forecastStrip = env.weather.forecast.join(" → ") || "n/a";
+    // Odds for the weather that follows the current spell (see weatherOutlook).
+    const outlook = weatherOutlook(env.season, env.weather.kind)
+        .map((o) => `${o.kind} ${Math.round(o.probability * 100)}%`)
+        .join(" · ") || "n/a";
 
     const envSection: StatsSection = {
         title: "Environment",
         lines: [
             `tick: ${tick}   season: ${env.season}   day-of-year: ${env.dayOfYear}   time: ${env.timeOfDay}`,
-            `weather: ${env.weather.kind} (${env.weather.ticksRemaining}t left)   forecast: ${forecastStrip}`,
+            `weather: ${env.weather.kind} (${env.weather.ticksRemaining}t left)   then: ${outlook}`,
             `temp: ${env.ambientTemp.toFixed(1)}°${coldActive ? "  [COLD-DEATH ACTIVE]" : ""}`,
             `predator: ${env.predator ? `Y at (${env.predator.pos.x},${env.predator.pos.y})${env.predator.huntingAntId ? " [hunting]" : ""}` : "N"}   strikes total: ${stats.predatorStrikesTotal}`,
         ],

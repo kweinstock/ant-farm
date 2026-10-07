@@ -11,6 +11,8 @@
 //     see broadcast.ts); that's a real gap, not an oversight.
 import { isServerMessage, type Hello, type SnapshotDTO, type Diff } from "../../shared/protocol";
 import { PROTOCOL_VERSION, TICK_MS } from "../../shared/constants";
+import type { SimEvent } from "../../sim";
+import type { Tally } from "../../shared/tally";
 
 // A Batch delivers ~25 ticks at once and they play back one per TICK_MS. If
 // frames pile up (background tabs throttle timers to ~1/s), fast-forward
@@ -21,7 +23,11 @@ const MAX_RETRY_MS = 30_000;
 
 export interface ColonyStreamCallbacks {
     onHello?: (hello: Hello) => void;
-    onUpdate?: (snapshot: SnapshotDTO) => void;
+    // `events`: everything countable that happened in the frames applied since the
+    // last call (including frames fast-forwarded past without a render).
+    // `tally`: set only when this update came from a Snapshot (connect / resync) —
+    // the colony's lifetime totals at that moment, to start the counters from.
+    onUpdate?: (snapshot: SnapshotDTO, events: SimEvent[], tally?: Tally) => void;
     onProtocolMismatch?: (serverVersion: number) => void;
     onClose?: (event: CloseEvent) => void;
 }
@@ -53,6 +59,11 @@ export function applyDiff(prev: SnapshotDTO, diff: Diff): SnapshotDTO {
         foodPiles: [...foodPiles.values()],
         foodStore: diff.foodStore ?? prev.foodStore,
         env: diff.env ?? prev.env,
+        graveyard: diff.graveyard ?? prev.graveyard,
+        // Carried forward by reference until a frame replaces them, which is what lets
+        // remote-state.ts cache the decoded nest / pheromone layers by identity.
+        pheromones: diff.pheromones ?? prev.pheromones,
+        nest: diff.nest ?? prev.nest,
     };
 }
 
@@ -65,6 +76,7 @@ export class ColonyStreamClient {
     private ws: WebSocket | null = null;
     private current: SnapshotDTO | null = null;
     private queue: Diff[] = [];
+    private pendingEvents: SimEvent[] = [];
     private playTimer: ReturnType<typeof setInterval> | null = null;
     private wantOpen = false; // false after close()
     private retryMs = RETRY_MS;
@@ -109,7 +121,8 @@ export class ColonyStreamClient {
     private stopPlayback(): void {
         if (this.playTimer !== null) clearInterval(this.playTimer);
         this.playTimer = null;
-        this.queue = []; 
+        this.queue = [];
+        this.pendingEvents = [];
     }
 
     private scheduleReconnect(): void {
@@ -147,7 +160,8 @@ export class ColonyStreamClient {
         if (message.kind === "snapshot") {
             this.current = message.data;
             this.queue = [];
-            this.callbacks.onUpdate?.(this.current);
+            this.pendingEvents = [];
+            this.callbacks.onUpdate?.(this.current, [], message.tally);
             return;
         }
 
@@ -177,6 +191,11 @@ export class ColonyStreamClient {
             return;
         }
         this.current = applyDiff(this.current, frame);
-        if (notify) this.callbacks.onUpdate?.(this.current);
+        if (frame.events) this.pendingEvents.push(...frame.events);
+        if (notify) {
+            const events = this.pendingEvents;
+            this.pendingEvents = [];
+            this.callbacks.onUpdate?.(this.current, events);
+        }
     }
 }

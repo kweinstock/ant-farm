@@ -1,6 +1,9 @@
 import type { AntId, Caste, Job, BroodStage, WeatherKind, Season, TimeOfDay } from "./enums";
 import type { BroodId } from "../sim/colony/brood";
 import type { CorpseId } from "../sim/corpses";
+import type { SimEvent } from "../sim";
+import type { Tally } from "./tally";
+import type { Chamber } from "../sim/world/nest";
 
 export interface Hello {
     kind: "hello";
@@ -25,6 +28,11 @@ export interface AntDTO {
     energy: number;
     ageTicks: number;
     asleep: boolean;
+    // Dashboard reads the queen's age against this ("age/lifespan").
+    lifespanTicks: number;
+    // The corpse this ant is currently assigned to haul, if any (dashboard counts
+    // undertakers; behavior.ts's idle check also keys off it).
+    undertaking?: CorpseId;
 }
 
 export interface BroodDTO {
@@ -65,6 +73,36 @@ export interface SnapshotEnvDTO {
     predator: PredatorDTO | null;
 }
 
+export interface RectDTO {
+    x0: number;
+    y0: number;
+    x1: number;
+    y1: number;
+}
+
+// A pheromone layer as its non-zero cells only: `i` are cell indices
+// (y * width + x), `v` the strengths. evaporate() floors every cell below
+// MIN_TRAIL to exactly 0, so a layer is a few hundred entries, not 7,200.
+// Values are float32-exact (see shared/wire-world.ts), so the dashboard's
+// "cells above floor / mass" matches the server to the digit.
+export interface SparseFieldDTO {
+    i: number[];
+    v: number[];
+}
+
+export interface PheromonesDTO {
+    trail: SparseFieldDTO;
+    alarm: SparseFieldDTO;
+}
+
+// The nest layout: dug-out tiles (one digit per cell, the TILE enum value,
+// row-major) and the chamber list. Distance fields and the tile -> chamber
+// lookup are NOT sent; the client rebuilds them with nestFromChambers.
+export interface NestDTO {
+    tiles: string;
+    chambers: Chamber[];
+}
+
 export interface FoodPileDTO {
     id: string;
     x: number;
@@ -83,11 +121,22 @@ export interface SnapshotDTO {
     foodPiles: FoodPileDTO[];
     foodStore: { amount: number; capacity: number };
     env: SnapshotEnvDTO;
+    // The surface graveyard rect — the colony can relocate it (decisions.ts), and
+    // "corpses pending" and the render both depend on where it is.
+    graveyard: RectDTO;
+    // The next two are attached by the Durable Object (worker/colony-do.ts), not by
+    // toSnapshot: they're big and change rarely (nest) or only matter once per
+    // batch (pheromones). Both are carried forward by applyDiff until replaced.
+    pheromones?: PheromonesDTO;
+    nest?: NestDTO;
 }
 
 export interface Snapshot {
     kind: "snapshot";
     data: SnapshotDTO;
+    // Lifetime totals as of this snapshot (see shared/tally.ts). Later frames'
+    // `events` keep them current. Optional so an older server's snapshots parse.
+    tally?: Tally;
 }
 
 // Keyed upsert/remove lists per entity kind — not a generic deep-diff
@@ -107,6 +156,15 @@ export interface Diff {
     corpsesRemoved: CorpseId[];
     foodStore?: { amount: number; capacity: number };
     env?: SnapshotEnvDTO;
+    graveyard?: RectDTO;
+    // Attached to the LAST frame of each batch only (pheromones change every tick
+    // but a 5 s refresh is plenty for an overlay and a dashboard count).
+    pheromones?: PheromonesDTO;
+    // Attached to the frame in which the nest layout changed (a dig finished).
+    nest?: NestDTO;
+    // This tick's countable events (deaths, births, forage departures, predator
+    // strikes — see statEvents in shared/tally.ts). Omitted when there were none.
+    events?: SimEvent[];
 }
 
 // Every tick that ran in one alarm, in order. Each frame is a normal Diff and

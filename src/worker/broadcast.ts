@@ -45,6 +45,7 @@ export function computeDiff(prev: SnapshotDTO, next: SnapshotDTO): Diff {
     const foodChanged =
         prev.foodStore.amount !== next.foodStore.amount || prev.foodStore.capacity !== next.foodStore.capacity;
     const envChanged = JSON.stringify(prev.env) !== JSON.stringify(next.env);
+    const graveyardChanged = JSON.stringify(prev.graveyard) !== JSON.stringify(next.graveyard);
 
     return {
         kind: "diff",
@@ -61,6 +62,7 @@ export function computeDiff(prev: SnapshotDTO, next: SnapshotDTO): Diff {
         foodPilesRemoved: foodPiles.removed,
         foodStore: foodChanged ? next.foodStore : undefined,
         env: envChanged ? next.env : undefined,
+        graveyard: graveyardChanged ? next.graveyard : undefined,
     };
 }
 

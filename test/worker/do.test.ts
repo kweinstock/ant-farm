@@ -248,4 +248,70 @@ describe("ColonyDO", () => {
         expect((await savedSeq())!).toBeGreaterThanOrEqual(start + SAVE_EVERY_TICKS);
         ws.close();
     });
+
+    it("each watched frame carries its countable events", async () => {
+        const stub = env.COLONY.get(env.COLONY.idFromName(`test-events-${crypto.randomUUID()}`));
+        const { ws, next } = await connect(stub);
+        await next(); // hello
+        await next(); // snapshot
+
+        for (let i = 0; i < 4; i++) {
+            await rewindClock(stub, MAX_CATCHUP_TICKS * TICK_MS);
+            await runDurableObjectAlarm(stub);
+        }
+
+        let sawForageDepart = false;
+        for (let i = 0; i < 4; i++) {
+            const batch = (await next()) as Batch;
+            for (const frame of batch.frames) {
+                if (frame.events?.some((event) => event.kind === "forageDepart")) sawForageDepart = true;
+            }
+        }
+        expect(sawForageDepart).toBe(true);
+        ws.close();
+    });
+
+    it("sends the nest and pheromone layers with the snapshot, and refreshes pheromones on each batch's last frame", async () => {
+        const stub = env.COLONY.get(env.COLONY.idFromName(`test-world-${crypto.randomUUID()}`));
+        const { ws, next } = await connect(stub);
+        await next(); // hello
+        const snapshot = (await next()) as Snapshot;
+
+        expect(snapshot.data.nest?.chambers.length).toBeGreaterThan(0);
+        expect(snapshot.data.nest?.tiles.length).toBeGreaterThan(0);
+        expect(snapshot.data.pheromones).toBeDefined();
+        expect(snapshot.data.graveyard).toBeDefined();
+        expect(snapshot.data.ants.every((ant) => typeof ant.lifespanTicks === "number" && ant.lifespanTicks > 0)).toBe(true);
+
+        await rewindClock(stub, 30 * TICK_MS); // a batch of 30 ticks
+        await runDurableObjectAlarm(stub);
+        const batch = (await next()) as Batch;
+
+        expect(batch.frames.length).toBeGreaterThan(1);
+        expect(batch.frames[batch.frames.length - 1].pheromones).toBeDefined();
+        expect(batch.frames[0].pheromones).toBeUndefined();
+        // The nest didn't change, so no frame resends it.
+        expect(batch.frames.some((frame) => frame.nest !== undefined)).toBe(false);
+        ws.close();
+    });
+
+    it("sends the lifetime tally with the snapshot, and it survives eviction", async () => {
+        const stub = env.COLONY.get(env.COLONY.idFromName(`test-tally-${crypto.randomUUID()}`));
+        await rewindClock(stub, 20 * 60 * 1000);
+        await runDurableObjectAlarm(stub); // idle: runs ~6000 ticks, counts them, saves
+        const departsBefore = await runInDurableObject(
+            stub,
+            (instance) => (instance as unknown as { tally: { forageDeparts: number } }).tally.forageDeparts,
+        );
+        expect(departsBefore).toBeGreaterThan(0);
+
+        const revived = await evict(stub);
+        const { ws, next } = await connect(revived);
+        await next(); // hello
+        const snapshot = (await next()) as Snapshot;
+
+        expect(snapshot.tally).toBeDefined();
+        expect(snapshot.tally!.forageDeparts).toBeGreaterThanOrEqual(departsBefore);
+        ws.close();
+    });
 });
