@@ -16,7 +16,10 @@ Phase 12 (Phases 3a–3c included) runs with `npm test` and `npm run dev` alone.
 > visual overhaul, all still local-only. The original Cloudflare phases 6–10
 > shifted up to **13–17**. Code comments that reference "Phase 6"–"Phase 10"
 > for the Durable Object, streaming, persistence, visitor actions, or D1 mean
-> what are now Phases 13–17; they were not mass-edited.
+> what were Phases 13–17 at the time; they were not mass-edited. Phases 15–17
+> were later reshaped: **15** is named ants + the ant card, **16** is visitor
+> actions (food patch, pins), and **17** audits whether cron / KV / D1 are still
+> needed. There is no lineage / family-tree feature any more.
 
 ---
 
@@ -514,77 +517,146 @@ hands.
 
 ---
 
-## Phase 13 — move the loop server-side (first Cloudflare step)
+## Phase 13 — move the loop server-side
 
-- `wrangler.jsonc` — add `main`, the `COLONY` Durable Object binding, and the
-  `v1` migration (`new_sqlite_classes`). No D1 yet.
-- `src/worker/index.ts` — fetch handler: serve assets, route `/ant-farm/api/stream`
-  to the DO.
-- `src/worker/colony-do.ts` — hold `ColonyState` in memory, `alarm()` runs
-  `step()` on `TICK_MS` and reschedules, accept a WebSocket (Hibernation API),
-  send a full snapshot then diffs.
-- `src/worker/broadcast.ts`, `connections.ts` — minimal.
-- `src/shared/protocol.ts` — `Hello`, `Snapshot`, `Diff`.
-- `src/web` — implement `net/socket.ts`; flip `config.ts` `SOURCE` to `"stream"`.
+Built and deployed to `testing.kweinstock.dev/ant-farm/`.
+
+- `wrangler.jsonc` — `main`, the `COLONY` Durable Object binding (SQLite-backed,
+  `v1` migration), path-scoped routes, `assets` from `./dist` (Vite `outDir` is
+  `dist/ant-farm` so the route's asset lookup matches). `env.testing` mirrors it.
+- `src/worker/index.ts` — serves assets, routes `/ant-farm/api/stream` to the DO
+  named `global-colony`.
+- `src/worker/colony-do.ts` — holds `ColonyState`, runs `step()` from `alarm()`,
+  Hibernation-API WebSockets; `broadcast.ts` (diffs), `connections.ts`.
+- `src/shared/` — `protocol.ts` (`Hello`, `Snapshot`, `Batch` of `Diff`s,
+  `PROTOCOL_VERSION`), `constants.ts` (tick / alarm cadence), `tally.ts`
+  (lifetime counters), `wire-world.ts` (pheromone + nest encoding).
+- `src/web/net/socket.ts` (playback queue, reconnect, gap guard) and
+  `remote-state.ts` (rebuilds a `ColonyState` from the wire so the dashboard
+  and renderer are the same code as local mode). `config.ts` `SOURCE` is
+  `"stream"` by default.
+- Tests: `test/worker/do.test.ts` (`@cloudflare/vitest-pool-workers`, its own
+  workspace under `test/worker/`), plus `test/sim/{stream-parity,stream-roundtrip}`.
+
+---
+
+## Phase 14 — persistence + replay
+
+- `src/sim/serialize.ts` — `encodeState` / `decodeState`, `SCHEMA_VERSION`.
+- `src/worker/persistence.ts` — save every `SAVE_EVERY_TICKS` while watched and
+  on every idle alarm; load in the constructor; a bad or mismatched save is
+  discarded with a log line instead of crashing.
+- `src/worker/loop.ts` — `ticksToRun` (capped), `replayStartMs`.
+- Cadence: watched = 5 s alarms; the first viewer is snapped to the present;
+  idle = one long alarm (`IDLE_ALARM_MS`, ~19.7 min) running up to `MAX_RUN_TICKS`.
+- Tests: eviction / resume / replay / schema mismatch / autosave in `do.test.ts`.
+
+**Still to confirm in production:** a redeploy with an existing save resumes
+instead of resetting (note the tick, deploy, compare; if it resets, run
+`npx wrangler tail --env testing`). `MAX_RUN_TICKS` is a guess until idle-alarm
+CPU time has been read from Observability.
+
+---
+
+## Phase 15 — ants you can click: names, ages, and the ant card
+
+Everything here lives **in the sim and the client**. No database, no history:
+when an ant dies, everything known about it goes with it.
+
+**Names (sim)**
+- Every ant gets a real name, `Given Surname`, instead of `name: id`
+  (`src/sim/ants/ant.ts`). Fill in `src/sim/names/{generator,wordlists}.ts`.
+- The **given name** is drawn from the wordlist. The **surname is inherited**
+  (see "Succession" below).
+- **Do not draw names from the sim RNG stream.** Derive the given name from a
+  hash of `(seed, ant id)`. Taking numbers from the main RNG would shift every
+  later roll and change the whole seed-12345 run the optimizer tuned against.
+  Test this: the population trajectory for seed 12345 must be identical before
+  and after this phase.
+- When an ant dies its name is dropped with it. Corpses carry no name, and
+  nothing is archived.
+
+**Succession (proposed rule, confirm before building)**
+- All workers are the queen's children, so a plain "inherit the mother's
+  surname" would give the whole colony one surname. To keep names meaningful,
+  a surname is a **line** that continues: when an ant dies, its surname is
+  queued, and the **next ant to hatch** takes it (and becomes the dead ant's
+  *heir*). If the queue is empty, a newborn takes the queen's surname.
+- The sim keeps a small bounded `heirs: deadId -> heirId` map so a client that
+  was away can still follow a chain. It rides in the snapshot and diffs.
+
+**The ant card (client)**
+- Click an ant (`render/engine.ts` already picks the ant under the cursor;
+  Phase 12d) and `src/web/ui/ant-card.ts` shows: **name, job, ticks alive,
+  ticks left** (`lifespanTicks - ageTicks`; both already on `AntDTO`). Tick
+  counts are also shown as days / hours where that reads better.
+- The card works in local and stream mode through the same `ColonyState`. If
+  the selected ant dies, the card follows its heir if there is one, else closes.
+- `ui/ant-list.ts` (a list of all ants) is optional: only build it if
+  click-an-ant needs a way to find ants.
+
+**Wire:** `AntDTO` carries the real name; bump `PROTOCOL_VERSION`
+(`src/shared/protocol.ts`) and `SCHEMA_VERSION` (`src/sim/serialize.ts`) if the
+saved shape changes, so old saves are discarded cleanly rather than half-loaded.
+
+**Deleted instead of built** (the lineage / dynasty idea is out):
+`src/sim/genetics/{lineage,inheritance,traits}.ts`, `src/web/ui/{family-tree,memorial}.ts`,
+`src/worker/{lineage-sink,api/lineage}.ts`, and the `lineage*` / `ant` /
+`event_log` tables in `db/schema.sql`.
 
 **Test:**
-- `test/worker/do.test.ts` under `vitest` + `@cloudflare/vitest-pool-workers`
-  (or miniflare): `alarm()` advances the sim and reschedules; a connected socket
-  receives `Hello` + `Snapshot` then `Diff`s.
-- `npx wrangler dev` — open the browser, see the same colony you had locally, now
-  driven by the Worker. Open two tabs → both show identical state.
+- names are deterministic for a seed; two runs give identical names.
+- seed 12345's population / tick trajectory is unchanged.
+- a dying ant's surname goes to the next hatch; with an empty queue a newborn
+  gets the queen's; the `heirs` map stays bounded.
+- stream parity: the ant card readout matches between a real state and one
+  rebuilt from the wire (extend `test/sim/stream-parity.test.ts`).
+
+**Run it:** click an ant, read its name, job, age and time left; watch the card
+follow its heir after it dies.
 
 ---
 
-## Phase 14 — persistence + hibernation replay
+## Phase 16 — visitor actions: food patches and pins
 
-- `src/sim/serialize.ts` — encode/decode state.
-- `src/worker/persistence.ts` — save every N ticks, load in the constructor.
-- `src/worker/loop.ts` — `ticksToRun(now, lastTick)` capped by `MAX_CATCHUP_TICKS`.
+Done after Phase 15 so there are named ants worth pinning.
 
-**Test:** DO test that simulates eviction (drop the instance, recreate) and
-asserts the colony resumes from storage and replays the missed ticks. Leave
-`wrangler dev` running, stop it, restart — colony continues, not resets.
+**Place food (server-authoritative)**
+- A visitor places a **2×2 food patch** on the surface. `src/sim/inputs.ts`
+  applies it (four adjacent surface tiles, each seeded with a new
+  `VISITOR_FOOD_TILE_AMOUNT` param); it rejects anything off-surface, out of
+  bounds, or on a rock / tree tile. This is the second guard.
+- `src/worker/inputs.ts` — validates `{ kind: "food", pos }`, enforces a
+  per-visitor daily allowance (anonymous id from `web/net/visitor-id.ts`) and a
+  global rate limit, and queues the patch for the **next tick** (never
+  mid-tick). Visitors cannot alter weather, season, temperature, or predators.
+- Transport: `POST /ant-farm/api/actions` via `src/worker/api/actions.ts` and
+  `router.ts`, forwarded to the DO; the DO answers with an `ActionAck`
+  `{accepted, reason?}`. This only costs a request when someone acts.
+- Client: a "place food" tool in `web/ui/toolbar.ts` (click the ground, see a
+  2×2 ghost, confirm) with the remaining allowance shown. The patch appears
+  through the normal diff stream, so there is no new render path.
+- **Tune the economy against it.** The food economy was optimized for seed
+  12345 with no outside food. Size the patch and allowance so visitors help but
+  can't flatten the starvation / winter pressure.
+- `water` and `ui/water-meter.ts` are dropped from the plan unless you want
+  them back.
 
----
+**Pins (client-only)**
+- A pin is an ant id kept in `localStorage` (`antfarm.pins`). No server table.
+- Pin from the ant card; `ui/pinned-tray.ts` lists this visitor's pins, each
+  one jumps the camera to the ant, and pinned ants get a highlight ring.
+- When a pinned ant dies the pin **moves to its heir** (Phase 15 succession),
+  resolved from the death event while connected and from the bounded `heirs`
+  map on reconnect. A pin whose chain was lost is dropped quietly.
+- Pins never reach the sim and never cost a request.
 
-## Phase 15 — visitor actions
-
-- `src/sim/inputs.ts` — apply food/water.
-- `src/worker/inputs.ts` — validate, clamp, per-visitor daily allowance, global
-  rate limit, queue for next tick.
-- `src/worker/api/actions.ts`, `src/web/net/visitor-id.ts`, `src/web/ui/toolbar.ts`,
-  `water-meter.ts`.
-
-**Test:** `test/worker/inputs.test.ts` — rejects bad kinds/positions/amounts,
-enforces allowance + rate limit. In the browser: drop food, watch foragers find it.
-
----
-
-## Phase 16 — D1: names, lineage, pins, browsing
-
-- `db/schema.sql` + `migrations/0001_init.sql`; `wrangler d1 create`, wire the
-  `DB` binding.
-- `src/sim/names/`, `src/sim/genetics/` (traits, inheritance, lineage).
-- `src/worker/lineage-sink.ts` — batch Birth/Death/Extinct → D1.
-- `src/worker/api/ants.ts`, `pins.ts`, `lineage.ts`, `stats.ts`.
-- `src/web/ui/ant-list.ts`, `ant-card.ts`, `pinned-tray.ts`, `family-tree.ts`,
-  `memorial.ts`, `weather-hud.ts`.
-
-**Test:** integration test — run the sim a while, assert `ant` / `lineage_edge`
-rows appear; `/api/ants` returns only the living; pin/unpin round-trips.
-
----
-
-## Phase 17 — cron, KV cache, deploy
-
-- `src/worker/cron.ts` + `triggers.crons` — DO keepalive + nightly housekeeping.
-- Optional `CACHE` KV namespace for the living-ants page and pin leaderboard.
-- `wrangler deploy --env testing` → `testing.kweinstock.dev/ant-farm/`.
-- Add the entry to `../landing-page/public/projects.json`.
-
-**Test:** watch it run on the testing subdomain for a day. Then `wrangler deploy`
-to production.
+**Test:** `test/worker/inputs.test.ts` — rejects bad kinds, off-surface and
+obstacle positions; enforces allowance and rate limit; the patch lands on the
+next tick; determinism holds with queued input. Unit tests for pin transfer
+(death → heir → pin id changes; a chain across several deaths; a lost chain).
+In the browser: drop a patch and watch foragers find it; pin an ant, let it
+die, watch the ring move.
 
 ---
 
