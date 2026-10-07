@@ -10,13 +10,15 @@ Holds the single authoritative `ColonyState`, serialized by
 
 | key | value |
 | --- | --- |
-| `snapshot` | `Uint8Array` — the whole colony (grid, nest, ants, brood, pheromones, env, rng seed) |
+| `snapshot` | structured-clone object — the whole colony minus derived data (nest distance fields and the tile lookup are rebuilt on load) |
 | `seq` | monotonic tick counter at last save |
 | `lastTickMs` | wall-clock of the last processed tick (drives replay on wake) |
 | `schemaVersion` | bump → `serialize.decode` migrates or rejects |
 
-Written every N ticks and again on hibernation. Read once, in the DO
-constructor. Single-writer, so no locking. Losing it rewinds the colony to the
+Written every `SAVE_EVERY_TICKS` (300) ticks while someone is watching, and on
+every idle alarm (see `docs/cloudflare-setup.md` §7). Read once, in the DO
+constructor, which replays the wall-clock time that passed since `lastTickMs`
+(capped at `MAX_RUN_TICKS` ticks; anything older is dropped). Single-writer, so no locking. Losing it rewinds the colony to the
 last save — it never corrupts.
 
 ## D1 (`db/schema.sql`)

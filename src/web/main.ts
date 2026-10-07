@@ -242,7 +242,7 @@ if (SOURCE === "local") {
             console.error(`[ant-farm] protocol mismatch: client v${PROTOCOL_VERSION}, server v${serverVersion}. Reload to pick up the new client.`);
         },
         onClose: () => {
-            console.warn("[ant-farm] stream closed (no auto-reconnect yet — Phase 14)");
+            console.warn("[ant-farm] stream closed — reconnecting");
         },
     });
     client.connect();

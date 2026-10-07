@@ -80,6 +80,7 @@ import { advanceWeather, type WeatherKind } from "./environment/weather";
 import { advancePredator, predatorCanStrike, coldDeathChance } from "./environment/hazards";
 import type { EnvState } from "./state";
 export { createInitialState, toSnapshot, type ColonyState, type EnvState, type ClimateOverride } from "./state";
+export { encodeState, decodeState, SCHEMA_VERSION } from "./serialize";
 
 
 export type DeathEvent = {

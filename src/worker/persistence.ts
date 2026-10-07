@@ -1,6 +1,43 @@
 // DO storage read/write (SQLite-backed Durable Object).
-//   loadSnapshot() -> { bytes, seq, lastTickMs } | null
-//   saveSnapshot(state, nowMs)   serialize.ts -> storage.put, plus seq + timestamp
-//   write cadence: every N ticks and once more on webSocket hibernation / shutdown
-// This snapshot is the crash/eviction recovery source of truth; losing it just
-// means the colony rewinds to the last save, not data corruption.
+//   loadSnapshot(storage) -> { state, lastTickMs } | null
+//   saveSnapshot(storage, state, lastTickMs)
+// Write cadence is colony-do.ts's call (every SAVE_EVERY_TICKS while watched,
+// every idle alarm). This snapshot is the crash/eviction recovery source of
+// truth; losing it just means the colony rewinds to the last save, not data
+// corruption.
+import { encodeState, decodeState, SCHEMA_VERSION, type ColonyState } from "../sim";
+import type { EncodedState } from "../sim/serialize";
+
+export interface LoadedColony {
+    state: ColonyState;
+    lastTickMs: number;
+}
+
+// One put() with all four keys: storage writes them atomically, so a crash
+// can't leave a snapshot paired with another save's timestamp.
+export async function saveSnapshot(storage: DurableObjectStorage, state: ColonyState, lastTickMs: number): Promise<void> {
+    await storage.put({
+        snapshot: encodeState(state),
+        seq: state.seq,
+        lastTickMs,
+        schemaVersion: SCHEMA_VERSION,
+    });
+}
+
+// null = nothing saved, or what's saved can't be used. Both mean "start a
+// fresh colony": a bad save is logged, never thrown, so it can't brick the
+// object on every cold start.
+export async function loadSnapshot(storage: DurableObjectStorage): Promise<LoadedColony | null> {
+    const saved = await storage.get(["snapshot", "lastTickMs", "schemaVersion"]);
+    const snapshot = saved.get("snapshot") as EncodedState | undefined;
+    const lastTickMs = saved.get("lastTickMs") as number | undefined;
+    const schemaVersion = saved.get("schemaVersion") as number | undefined;
+    if (snapshot === undefined || lastTickMs === undefined || schemaVersion === undefined) return null;
+
+    try {
+        return { state: decodeState(snapshot, schemaVersion), lastTickMs };
+    } catch (error) {
+        console.error("[ColonyDO] discarding unusable saved colony:", error);
+        return null;
+    }
+}

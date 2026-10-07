@@ -154,6 +154,25 @@ function buildChamberField(grid: Grid, chamber: Chamber): Int16Array {
     return distanceField(grid, chamberSeedTiles(chamber));
 }
 
+// Rebuilds everything in a Nest that is derived from the grid + chamber list:
+// the per-chamber distance fields and the tile -> chamber lookup. Used when a
+// saved colony is loaded (sim/serialize.ts), which stores only the chambers.
+export function nestFromChambers(grid: Grid, chambers: Chamber[]): Nest {
+    const tileChamber: (ChamberId | undefined)[] = new Array(grid.width * grid.height).fill(undefined);
+    for (const chamber of chambers) {
+        for (const tile of chamber.tiles) {
+            tileChamber[getIndex(grid, tile.x, tile.y)] = chamber.id;
+        }
+    }
+
+    const distanceFields = {} as Record<ChamberId, Int16Array>;
+    for (const chamber of chambers) {
+        distanceFields[chamber.id] = buildChamberField(grid, chamber);
+    }
+
+    return { chambers, distanceFields, tileChamber };
+}
+
 // The one tile foraging.ts's crossExit checks against — not "somewhere in
 // the EXIT chamber," but specifically the top of the shaft, since that's
 // the tile the EXIT distance field now seeds from (see the special case in

@@ -2,42 +2,70 @@
 // "global-colony" (see worker/index.ts — that's the only place that name
 // is chosen). Holds the whole ColonyState in memory and owns the tick loop.
 //
-// PHASE 13: in-memory only. No persistence.ts calls (that's Phase 14), so a
-// cold start / eviction always begins from createInitialState() with a fixed
-// seed — the colony rewinds to tick 0 rather than resuming.
+// PHASE 14: the colony is saved (worker/persistence.ts) and reloaded in the
+// constructor, so an eviction or redeploy resumes it instead of resetting to
+// tick 0. Missed wall-clock time is replayed (worker/loop.ts), capped at one
+// invocation's worth (MAX_RUN_TICKS).
 //
-// Ticking is batched: the sim still advances one tick per TICK_MS (200 ms) of
-// wall-clock time, but the object only wakes every ALARM_MS (5 s) — ~25 alarms
-// per minute-ish instead of 300 — to keep requests inside the free-tier
-// budget. Each alarm runs every tick that has elapsed (worker/loop.ts's
-// ticksToRun) and sends them to viewers as one Batch of per-tick Diffs, which
-// the client plays back at TICK_MS spacing. Replay after hibernation/eviction
-// (loading persisted state first) is still Phase 14.
+// The sim advances one tick per TICK_MS (200 ms) of wall-clock time, but the
+// object wakes at two speeds to stay inside the free-tier request budget:
+//   watched (>=1 socket)  every ALARM_MS (5 s): run the elapsed ticks (capped
+//                         at MAX_CATCHUP_TICKS) and send one Batch of Diffs
+//   idle (no sockets)     every IDLE_ALARM_MS (~20 min): run the whole gap in
+//                         one go (<= MAX_RUN_TICKS), no snapshots/diffs, save,
+//                         then sleep (the object is evicted until the next alarm)
+// The first viewer after an idle stretch is snapped to the present: the
+// backlog is run BEFORE their snapshot is built. Later viewers get the current
+// snapshot with no catch-up (see fetch()).
 import { DurableObject } from "cloudflare:workers";
 import { createInitialState, step, toSnapshot, type ColonyState } from "../sim";
-import { TICK_MS, ALARM_MS, PROTOCOL_VERSION } from "../shared/constants";
+import { TICK_MS, ALARM_MS, IDLE_ALARM_MS, MAX_CATCHUP_TICKS, MAX_RUN_TICKS, SAVE_EVERY_TICKS, PROTOCOL_VERSION } from "../shared/constants";
 import type { Hello, Snapshot, Diff } from "../shared/protocol";
 import { registerConnection, unregisterConnection } from "./connections";
 import { broadcastBatch, computeDiff } from "./broadcast";
-import { ticksToRun } from "./loop";
+import { ticksToRun, replayStartMs } from "./loop";
+import { loadSnapshot, saveSnapshot } from "./persistence";
 
 const COLONY_SEED = 12345;
 
 export class ColonyDO extends DurableObject<Env> {
-    private colony: ColonyState;
+    // Both assigned inside blockConcurrencyWhile (they need an async storage
+    // read) before any other request can run.
+    private colony!: ColonyState;
     // Wall-clock time the sim has been advanced up to. Only ever moves forward
     // by whole ticks (never set to "now"), so rounding error can't build up.
-    private lastTickMs: number;
+    private lastTickMs!: number;
+    private ticksSinceSave = 0;
 
     constructor(ctx: DurableObjectState, env: Env) {
         super(ctx, env);
-        this.colony = createInitialState(COLONY_SEED);
-        this.lastTickMs = Date.now();
 
         ctx.blockConcurrencyWhile(async () => {
+            const saved = await loadSnapshot(ctx.storage);
+            if (saved) {
+                this.colony = saved.state;
+                this.lastTickMs = replayStartMs(saved.lastTickMs, Date.now());
+            } else {
+                this.colony = createInitialState(COLONY_SEED);
+                this.lastTickMs = Date.now();
+            }
+            // Hibernated sockets can outlive an eviction but now disagree with
+            // the restored state: re-send Hello + Snapshot so each viewer
+            // resyncs without reconnecting. Per-socket try/catch: a throw here
+            // would fail the constructor itself, and every later cold start
+            // would fail the same way, so one dead socket must not be able to
+            // take the whole object down.
+            for (const ws of ctx.getWebSockets()) {
+                try {
+                    this.sendHelloAndSnapshot(ws);
+                } catch (error) {
+                    console.error("[ColonyDO] couldn't resync a restored socket:", error);
+                }
+            }
+
             const existing = await ctx.storage.getAlarm();
             if (existing === null) {
-                await ctx.storage.setAlarm(Date.now() + ALARM_MS);
+                await ctx.storage.setAlarm(Date.now() + (this.hasViewers() ? ALARM_MS : IDLE_ALARM_MS));
             }
         });
     }
@@ -51,6 +79,24 @@ export class ColonyDO extends DurableObject<Env> {
             }
             const pair = new WebSocketPair();
             const [client, server] = Object.values(pair);
+
+            // First viewer after an idle stretch: nobody else is mid-stream, so
+            // run the whole backlog now and hand this viewer the colony as of
+            // "now". With other viewers connected we must NOT advance here:
+            // they'd never receive those ticks as frames, their frame chain
+            // would break, and they'd drop and reconnect.
+            if (!this.hasViewers()) {
+                this.advance(ticksToRun(Date.now(), this.lastTickMs, MAX_RUN_TICKS), false);
+                try {
+                    await this.save();
+                } catch (error) {
+                    // A failed save must not lock the viewer out: the colony is
+                    // already caught up in memory, and the next save retries
+                    // (ticksSinceSave is only reset after a successful one).
+                    console.error("[ColonyDO] save on connect failed:", error);
+                }
+                await this.ctx.storage.setAlarm(Date.now() + ALARM_MS);
+            }
 
             this.ctx.acceptWebSocket(server);
             this.sendHelloAndSnapshot(server);
@@ -91,24 +137,52 @@ export class ColonyDO extends DurableObject<Env> {
         // re-arm it. Reschedule no matter what; the error still propagates
         // to the runtime's logs.
         try {
+            const watched = this.hasViewers();
+            // Watched: one batch, capped at MAX_CATCHUP_TICKS. Idle: run the
+            // whole gap since the last alarm in one go, with no snapshots,
+            // diffs or JSON since nobody receives them.
+            const cap = watched ? MAX_CATCHUP_TICKS : MAX_RUN_TICKS;
             // At least one tick, so an early or immediate alarm (the tests fire
             // one right after construction) still advances the sim.
-            const ticks = Math.max(1, ticksToRun(Date.now(), this.lastTickMs));
-            this.lastTickMs += ticks * TICK_MS;
+            const ticks = Math.max(1, ticksToRun(Date.now(), this.lastTickMs, cap));
+            const frames = this.advance(ticks, watched);
 
-            const frames: Diff[] = [];
-            let prev = toSnapshot(this.colony);
-            for (let i = 0; i < ticks; i++) {
-                this.colony = step(this.colony, 1).state;
+            if (watched) {
+                broadcastBatch(this.ctx, frames);
+                if (this.ticksSinceSave >= SAVE_EVERY_TICKS) await this.save();
+            } else {
+                await this.save(); // about to be evicted: persist every idle alarm
+            }        
+        } finally {
+            await this.ctx.storage.setAlarm(Date.now() + (this.hasViewers() ? ALARM_MS : IDLE_ALARM_MS));
+        }
+    }
+
+    // `excluding`: a socket that's mid-close can still appear in getWebSockets().
+    private hasViewers(excluding?: WebSocket): boolean {
+        return this.ctx.getWebSockets().some((ws) => ws !== excluding && ws.readyState === WebSocket.OPEN);
+    }
+
+    // Runs `ticks` ticks; builds per-tick Diffs only when someone will receive them.
+    private advance(ticks: number, collectFrames: boolean): Diff[] {
+        const frames: Diff[] = [];
+        let prev = collectFrames ? toSnapshot(this.colony) : null;
+        for (let i = 0; i < ticks; i++) {
+            this.colony = step(this.colony, 1).state;
+            if (prev) {
                 const next = toSnapshot(this.colony);
                 frames.push(computeDiff(prev, next));
                 prev = next;
             }
-
-            broadcastBatch(this.ctx, frames);
-        } finally {
-            await this.ctx.storage.setAlarm(Date.now() + ALARM_MS);
         }
+        this.lastTickMs += ticks * TICK_MS;
+        this.ticksSinceSave += ticks;
+        return frames;
+    }
+
+    private async save(): Promise<void> {
+        await saveSnapshot(this.ctx.storage, this.colony, this.lastTickMs);
+        this.ticksSinceSave = 0;
     }
     
     webSocketMessage(_ws: WebSocket, _message: string | ArrayBuffer): void {
@@ -117,11 +191,20 @@ export class ColonyDO extends DurableObject<Env> {
         // silently ignoring it is deliberate rather than an oversight.
     }
 
-    webSocketClose(ws: WebSocket, _code: number, _reason: string, _wasClean: boolean): void {
+    async webSocketClose(ws: WebSocket, _code: number, _reason: string, _wasClean: boolean): Promise<void> {
         unregisterConnection(ws);
+        await this.goIdleIfEmpty(ws);
     }
 
-    webSocketError(ws: WebSocket, _error: unknown): void {
+    async webSocketError(ws: WebSocket, _error: unknown): Promise<void> {
         unregisterConnection(ws);
+        await this.goIdleIfEmpty(ws);
     }
+
+    // Last viewer gone: drop the 5 s cadence, push the next alarm out to the idle gap.
+    private async goIdleIfEmpty(leaving: WebSocket): Promise<void> {
+        if (this.hasViewers(leaving)) return;
+        await this.ctx.storage.setAlarm(Date.now() + IDLE_ALARM_MS);
+    }
+
 }

@@ -122,6 +122,16 @@ cheap; the broadcast fan-out is not billed per-viewer). Every cron fire counts.
 | 5000 | ~17,280 | ~80k |
 | 10000 | ~8,640 | ~90k |
 
+**What the code actually does** (`src/shared/constants.ts`): `TICK_MS` (200 ms) is the
+sim step, not the alarm cadence. While at least one viewer is connected the object
+wakes every `ALARM_MS` (5 s, ~17k alarms/day if someone watches 24 h) and sends the
+~25 ticks since the last wake as one `Batch`. With nobody connected it wakes every
+`IDLE_ALARM_MS` (~20 min, ~73/day), runs the whole gap in one go (at most
+`MAX_RUN_TICKS` ticks, sized to the per-invocation CPU limit), saves, and is evicted
+until the next alarm. The first viewer after an idle stretch is caught up to the
+present before they get their snapshot. The table above is therefore the *watched*
+budget, scaled by hours watched per day.
+
 Cron at `*/1` adds ~1,440/day. Start at **`TICK_MS = 5000`** (the sim can run
 multiple simulation steps per alarm if you want finer-grained behavior — the
 alarm cadence and the sim step size are separate knobs; see

@@ -2,11 +2,13 @@
 //   - connect, validate Hello.protocolVersion against shared/constants.ts
 //   - maintain a running SnapshotDTO: replace wholesale on Snapshot, apply
 //     keyed upsert/remove lists on top of it on each Diff
-//   - PHASE 13 does NOT reconnect on close/error, and does NOT send Subscribe
-//     (no viewport filtering exists server-side yet — see broadcast.ts).
-//     Both are real gaps, not oversights: auto-reconnect + resync-on-gap is
-//     naturally Phase 14 work, since it overlaps with what persistence and
-//     hibernation-replay change about what a "gap" even means.
+//   - frames arrive in Batches (one per server alarm) and are played back one
+//     per TICK_MS, so movement looks like the live sim
+//   - reconnects with backoff (1 s doubling to 30 s) if the socket drops or a
+//     frame doesn't chain onto what we have (e.g. the server restored an older
+//     save); a protocol-version mismatch is NOT retried — reload the page
+//   - does NOT send Subscribe (no viewport filtering exists server-side yet —
+//     see broadcast.ts); that's a real gap, not an oversight.
 import { isServerMessage, type Hello, type SnapshotDTO, type Diff } from "../../shared/protocol";
 import { PROTOCOL_VERSION, TICK_MS } from "../../shared/constants";
 
@@ -14,6 +16,8 @@ import { PROTOCOL_VERSION, TICK_MS } from "../../shared/constants";
 // frames pile up (background tabs throttle timers to ~1/s), fast-forward
 // instead of falling further behind real time.
 const MAX_BACKLOG = 50;
+const RETRY_MS = 1000; // first reconnect delay; doubles per failed attempt
+const MAX_RETRY_MS = 30_000;
 
 export interface ColonyStreamCallbacks {
     onHello?: (hello: Hello) => void;
@@ -62,13 +66,23 @@ export class ColonyStreamClient {
     private current: SnapshotDTO | null = null;
     private queue: Diff[] = [];
     private playTimer: ReturnType<typeof setInterval> | null = null;
+    private wantOpen = false; // false after close()
+    private retryMs = RETRY_MS;
+    private retryTimer: ReturnType<typeof setTimeout> | null = null;
 
     constructor(private readonly url: string, private readonly callbacks: ColonyStreamCallbacks = {}) {}
 
     connect(): void {
+        this.wantOpen = true;
         const ws = new WebSocket(this.url);
         ws.addEventListener("message", (event) => this.handleMessage(event.data));
-        ws.addEventListener("close", (event) => this.callbacks.onClose?.(event));
+        ws.addEventListener("close", (event) => {
+            this.callbacks.onClose?.(event);
+            if (this.ws === ws) {
+                this.ws = null;
+                this.scheduleReconnect();
+            }
+        });
         this.ws = ws;
     }
 
@@ -77,11 +91,36 @@ export class ColonyStreamClient {
     }
 
     close(): void {
-        if (this.playTimer !== null) clearInterval(this.playTimer);
-        this.playTimer = null;
-        this.queue = [];
+        this.wantOpen = false;
+        if (this.retryTimer !== null) clearTimeout(this.retryTimer);
+        this.retryTimer = null;
+        this.stopPlayback();
         this.ws?.close();
         this.ws = null;
+    }
+
+    private drop(): void {
+        const ws = this.ws;
+        this.ws = null;
+        ws?.close();
+        this.scheduleReconnect();
+    }
+
+    private stopPlayback(): void {
+        if (this.playTimer !== null) clearInterval(this.playTimer);
+        this.playTimer = null;
+        this.queue = []; 
+    }
+
+    private scheduleReconnect(): void {
+        if (!this.wantOpen || this.retryTimer !== null) return;
+        this.stopPlayback();
+        const delay = this.retryMs;
+        this.retryMs = Math.min(this.retryMs * 2, MAX_RETRY_MS);
+        this.retryTimer = setTimeout(() => {
+            this.retryTimer = null;
+            this.connect()
+        }, delay);
     }
 
     private handleMessage(raw: unknown): void {
@@ -101,6 +140,7 @@ export class ColonyStreamClient {
                 return;
             }
             this.callbacks.onHello?.(message);
+            this.retryMs = RETRY_MS; // connected fine: reset the backoff
             return;
         }
 
@@ -128,13 +168,12 @@ export class ColonyStreamClient {
     private applyFrame(frame: Diff, notify: boolean): void {
         if (!this.current) return;
         // A diff is only valid on top of the exact snapshot it was computed
-        // from. A mismatch means frames were missed or the server restarted
-        // (in-memory colony resets to seq 0 on eviction this phase) —
-        // applying it would silently corrupt the view, and there's no
-        // resync request yet (Phase 14), so drop the connection instead.
+        // from. A mismatch means frames were missed or the server restored an
+        // older save — applying it would corrupt the view, so drop the
+        // connection and reconnect for a fresh snapshot.
         if (frame.baseSeq !== this.current.seq) {
             console.warn(`[ant-farm] stream out of sync (have seq ${this.current.seq}, diff base ${frame.baseSeq}) — closing`);
-            this.close();
+            this.drop();
             return;
         }
         this.current = applyDiff(this.current, frame);
