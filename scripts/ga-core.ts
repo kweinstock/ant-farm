@@ -47,8 +47,8 @@ export const SEARCH_SPACE: ParamSpec[] = [
     // under 15% from the old ceiling; FOOD_TILE_CAPACITY's own ceiling
     // moved the same amount to keep it able to actually hold that much
     // (spawnFoodPiles caps a pile's amount at FOOD_TILE_CAPACITY).
-    { name: "FOOD_TILE_CAPACITY", min: 500, max: 10000, integer: true },
-    { name: "FOOD_PILE_START_AMOUNT", min: 50, max: 10000, integer: true },
+    { name: "FOOD_TILE_CAPACITY", min: 500, max: 1000000, integer: true },
+    { name: "FOOD_PILE_START_AMOUNT", min: 50, max: 1000000, integer: true },
     // No ceiling change: 1 is a hard, physical bound on a probability, not
     // an arbitrary search-space wall — nothing to widen past it.
     { name: "PILE_SPAWN_CHANCE", min: 0.03, max: 1 },
@@ -68,7 +68,7 @@ export const SEARCH_SPACE: ParamSpec[] = [
     { name: "ALARM_DEPOSIT_AMOUNT", min: 20, max: 300, integer: true },
     { name: "ALARM_SPREAD_FRAC", min: 0.1, max: 0.9 },
     { name: "ALARM_FLEE_THRESHOLD", min: 5, max: 100, integer: true },
-    { name: "MAX_PILES", min: 10, max: 1000, integer: true },
+    { name: "MAX_PILES", min: 10, max: 300, integer: true },
 
     // ---- foraging memory ----
     { name: "FORAGING_TRIP_FAILURE_TICKS", min: 50, max: 400, integer: true },

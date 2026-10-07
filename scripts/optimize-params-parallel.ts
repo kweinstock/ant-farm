@@ -36,7 +36,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import { QUEEN_MAX_LIFESPAN_TICKS } from "../src/sim/params";
+import { MAX_LIFESPAN_TICKS, QUEEN_MAX_LIFESPAN_TICKS } from "../src/sim/params";
 import {
     SEARCH_SPACE,
     type Genome,
@@ -84,7 +84,7 @@ const FLAGS: FlagSpec[] = [
     // 12345 is the seed actually in use (print-sim.ts's default) — that's
     // the trajectory that matters, not an arbitrary sample.
     { flag: "seeds", env: "TRIAL_SEEDS", default: "12345", help: "comma-separated RNG seeds each trial's fitness is averaged over (forwarded to trial-runner.ts)" },
-    { flag: "maxticks", env: "TRIAL_MAX_TICKS", default: String(QUEEN_MAX_LIFESPAN_TICKS + 20000), help: "tick cap per seed — surviving to this point counts as \"survived the full window\" (forwarded to trial-runner.ts). Defaults to QUEEN_MAX_LIFESPAN_TICKS." },
+    { flag: "maxticks", env: "TRIAL_MAX_TICKS", default: String(QUEEN_MAX_LIFESPAN_TICKS + MAX_LIFESPAN_TICKS), help: "tick cap per seed — surviving to this point counts as \"survived the full window\" (forwarded to trial-runner.ts). Defaults to QUEEN_MAX_LIFESPAN_TICKS." },
     { flag: "targetpop", env: "TARGET_AVG_POPULATION", default: "30", help: "average population a trial is scored against — closer wins, not just \"more\"" },
     // Every core, not cores-1: this machine's CPU is dedicated to the
     // search for the run's duration, and trial-runner.ts's workers are
