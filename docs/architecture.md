@@ -152,25 +152,21 @@ ant-farm/
 │   │   │   ├── pheromone-layer.ts # optional heat-map toggle (surface)
 │   │   │   ├── weather-fx.ts   # rain / snow / puddles / heat shimmer
 │   │   │   ├── daynight.ts     # color grade by TimeOfDay
-│   │   │   ├── season-fx.ts    # palette + surface dressing by Season
-│   │   │   └── sprites/atlas.ts # sprite-sheet loader + atlas coords
+│   │   │   └── season-fx.ts    # palette + surface dressing by Season
 │   │   ├── ui/
 │   │   │   ├── view-switch.ts  # farm view + surface view side-by-side / stacked; toggle on narrow screens
-│   │   │   ├── toolbar.ts      # place-food tool (Phase 16)
-│   │   │   ├── ant-list.ts     # optional list of ants (stub)
-│   │   │   ├── ant-card.ts     # clicked ant: name, job, time alive / left; follows its heir
-│   │   │   ├── pinned-tray.ts  # this visitor's pinned ants; drives the highlight ring (Phase 16)
-│   │   │   └── weather-hud.ts  # season, time, temperature, weather + forecast
-│   │   └── lib/
-│   │       ├── dom.ts          # tiny helpers
-│   │       └── format.ts       # ageTicks -> "3 days", etc.
+│   │   │   ├── nav-bar.ts      # the menu: Colony / View / Pinned / About + ant arrows (dock on desktop, bottom bar on phones)
+│   │   │   ├── control-panel.ts # time/weather HUD, camera + overlay toggles, stats dashboard
+│   │   │   ├── ant-card.ts     # clicked ant: name, job, lifespan, energy; pin button; follows its heir
+│   │   │   ├── pinned-tray.ts  # this visitor's pinned ants; jump to one or unpin
+│   │   │   ├── ant-info.ts     # the About modal
+│   │   │   └── icons.ts, layout.ts  # inline SVG icons; the phone breakpoint
 │   │
-│   ├── main.ts                 # existing template entry — re-point at src/web/main.ts
 │   └── vite-env.d.ts
 │
 └── test/
-    ├── sim/{determinism,population,learning,balance}.test.ts
-    └── worker/{do,inputs}.test.ts
+    ├── sim/*.test.ts           # determinism, population, balance, names, pins, stream parity, ...
+    └── worker/do.test.ts       # the Durable Object, under @cloudflare/vitest-pool-workers
 ```
 
 ---
