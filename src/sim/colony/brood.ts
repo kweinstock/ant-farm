@@ -8,6 +8,7 @@
 
 import type { Ant, AntId } from "../ants/ant";
 import { createWorker } from "../ants/ant";
+import { givenNameFor } from "../names/generator";
 import type { ColonyState } from "../state";
 import { chamberAt } from "../world/nest";
 import type { Position } from "../world/grid";
@@ -120,7 +121,7 @@ export function advanceBrood(state: ColonyState): {
             // by the isPlaced guard above. Phase 6: with multiple nurseries a
             // fixed "first nursery tile" spawn point teleported every newborn
             // to NURSERY-0 no matter which nursery it developed in.
-            const newAdult = createWorker(antId, { ...entry.position }, rngSeed)
+            const newAdult = createWorker(antId, givenNameFor(antId), { ...entry.position }, rngSeed)
             rngSeed = newAdult.seed;
             newAdults.push(newAdult.ant);
             // Not pushed to remainingBrood — this entry is gone, replaced by

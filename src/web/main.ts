@@ -47,6 +47,8 @@ import { SOURCE, TICK_INTERVALS_MS } from "./config";
 import { startRenderLoop } from "./render/engine";
 import { mountViews } from "./ui/view-switch";
 import { mountControlPanel } from "./ui/control-panel";
+import { mountAntCard } from "./ui/ant-card";
+import { mountNavBar } from "./ui/nav-bar";
 import { ColonyStreamClient, colonyStreamUrl } from "./net/socket";
 import { PROTOCOL_VERSION } from "../shared/constants";
 import { colonyStateFromSnapshot } from "./net/remote-state";
@@ -59,7 +61,16 @@ if (!(viewsContainer instanceof HTMLElement)) {
 }
 
 const { sceneContainer } = mountViews(viewsContainer);
-const { renderOptions, onResetView, update: updatePanel } = mountControlPanel(viewsContainer);
+const { renderOptions, onResetView, setScreen, openInfo, update: updateControlPanel } = mountControlPanel(viewsContainer);
+// When the card moves on to a dead ant's heir, the camera goes with it.
+const antCard = mountAntCard(viewsContainer, (id) => scene.focusAnt(id), () => scene.exitFocus());
+// The menu: screens (Colony / View / About) with ant arrows on either side.
+mountNavBar(viewsContainer, { onScreen: setScreen, onAbout: openInfo, onCycle: (direction) => cycleAnt(direction) });
+// One call for everything that redraws on a sim update.
+function updatePanel(state: ColonyState, stats: TuningStats): void {
+    updateControlPanel(state, stats);
+    antCard.update(state);
+}
 
 // Fixed, same as scripts/print-sim.ts — deterministic while tuning behavior.
 const seed = 12345;
@@ -214,8 +225,26 @@ const frameSource: FrameSource = {
     getTickStartTime: () => tickStartTime,
 };
 
-const scene = startRenderLoop(sceneContainer, frameSource, renderOptions);
+const scene = startRenderLoop(sceneContainer, frameSource, renderOptions, antCard.select);
 onResetView(scene.resetCamera);
+// The nav bar's arrows: step through the living ants in the order the colony lists
+// them (queen first, then oldest to newest). Starts at the first/last ant when
+// nothing is selected.
+function cycleAnt(direction: 1 | -1): void {
+    const ids = [...state.ants.keys()];
+    if (ids.length === 0) {
+        return;
+    }
+    const current = antCard.selected();
+    const index = current === undefined ? -1 : ids.indexOf(current);
+    const next =
+        index === -1
+            ? (direction === 1 ? 0 : ids.length - 1)
+            : (index + direction + ids.length) % ids.length;
+    antCard.select(ids[next]);
+    antCard.update(state);
+    scene.focusAnt(ids[next]);
+}
 updatePanel(state, stats);
 
 if (SOURCE === "local") {

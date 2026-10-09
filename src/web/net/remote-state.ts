@@ -169,5 +169,6 @@ export function colonyStateFromSnapshot(base: ColonyState, snapshot: SnapshotDTO
             predator: snapshot.env.predator ? predatorFromDTO(snapshot.env.predator, base.env.predator) : null,
         },
         surface: { ...base.surface, foodPiles, graveyard: { ...snapshot.graveyard }, trail, alarm },
+        heirs: snapshot.heirs,
     };
 }

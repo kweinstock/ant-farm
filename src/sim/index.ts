@@ -53,7 +53,8 @@
 //                                                            specifically, they just happen to live on
 //                                                            state.surface/state.corpses and age/decay on
 //                                                            their own schedules alongside piles
-//   8. genetics + lineage bookkeeping     (genetics/*)      offspring traits, family-tree edges, extinction marks
+//   8. names                              (names/*)         dead ants queue their surname; each new adult takes the oldest
+//                                                            (cosmetic only, never touches rngSeed)
 //   9. collect + return events
 import { ageAndMeter } from "./ants/lifecycle";
 import { perceive } from "./ants/senses";
@@ -79,6 +80,8 @@ import { ambientTemp, tempAtDepth } from "./environment/temperature";
 import { advanceWeather, type WeatherKind } from "./environment/weather";
 import { advancePredator, predatorCanStrike, coldDeathChance } from "./environment/hazards";
 import type { EnvState } from "./state";
+import { queueSurname, claimSurname, givenNameFor, fullName } from "./names/generator";
+
 export { createInitialState, toSnapshot, type ColonyState, type EnvState, type ClimateOverride } from "./state";
 export { encodeState, decodeState, SCHEMA_VERSION } from "./serialize";
 
@@ -173,7 +176,7 @@ function killWorker(cs: ColonyState, dead: Parameters<typeof recordDeath>[2], ca
     }
 
     events.push({ kind: "death", antId: dead.id, ageTicks: dead.ageTicks, where: dead.location.where, cause, caste: dead.caste, job: dead.job });
-    return { ...cs, ants: nextAnts, corpses, nextCorpseId };
+    return { ...cs, ants: nextAnts, corpses, nextCorpseId, surnameQueue: queueSurname(cs.surnameQueue, dead.id, dead.name) };
 }
 
 function singleTick(state: ColonyState): TickResult {
@@ -342,6 +345,7 @@ function singleTick(state: ColonyState): TickResult {
             brood: queenResult.brood,
             corpses,
             nextCorpseId,
+            surnameQueue: queenResult.isDead ? queueSurname(currentState.surnameQueue, currentState.queenId, queenResult.queen.name) : currentState.surnameQueue,
             nextBroodId: currentState.nextBroodId + (queenLaidEgg ? 1 : 0),
             rngSeed: queenResult.rngSeed,
         };
@@ -351,8 +355,13 @@ function singleTick(state: ColonyState): TickResult {
     events.push(...broodResult.events);
 
     const nextAntsAfterBrood = new Map(currentState.ants);
+    let surnameQueue = currentState.surnameQueue;
+    let heirs = currentState.heirs;
     for (const newAdult of broodResult.newAdults) {
-        nextAntsAfterBrood.set(newAdult.id, newAdult);
+        const claim = claimSurname(surnameQueue, heirs, newAdult.id);
+        surnameQueue = claim.queue;
+        heirs = claim.heirs;
+        nextAntsAfterBrood.set(newAdult.id, { ...newAdult, name: fullName(givenNameFor(newAdult.id), claim.surname) });
         events.push({kind: "birth", antId: newAdult.id, ageTicks: newAdult.ageTicks});
     }
 
@@ -362,6 +371,8 @@ function singleTick(state: ColonyState): TickResult {
         brood: broodResult.brood,
         nextAntId: currentState.nextAntId + broodResult.newAdults.length,
         rngSeed: broodResult.rngSeed,
+        surnameQueue,
+        heirs,
     };
 
     // Colony job allocation: keep enough nurses on the placed brood, drawn

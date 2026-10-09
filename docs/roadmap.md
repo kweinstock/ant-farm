@@ -16,10 +16,11 @@ Phase 12 (Phases 3a–3c included) runs with `npm test` and `npm run dev` alone.
 > visual overhaul, all still local-only. The original Cloudflare phases 6–10
 > shifted up to **13–17**. Code comments that reference "Phase 6"–"Phase 10"
 > for the Durable Object, streaming, persistence, visitor actions, or D1 mean
-> what were Phases 13–17 at the time; they were not mass-edited. Phases 15–17
-> were later reshaped: **15** is named ants + the ant card, **16** is visitor
-> actions (food patch, pins), and **17** audits whether cron / KV / D1 are still
-> needed. There is no lineage / family-tree feature any more.
+> what were Phases 13–16 at the time; they were not mass-edited. Phases 15–16
+> were later reshaped: **15** is named ants + the ant card and **16** is visitor
+> actions (food patch, pins). The old Phase 17 (cron, KV, D1) was dropped: the
+> project is the Worker + one Durable Object and nothing else. There is no
+> lineage / family-tree feature any more.
 
 ---
 
@@ -599,10 +600,16 @@ when an ant dies, everything known about it goes with it.
 (`src/shared/protocol.ts`) and `SCHEMA_VERSION` (`src/sim/serialize.ts`) if the
 saved shape changes, so old saves are discarded cleanly rather than half-loaded.
 
-**Deleted instead of built** (the lineage / dynasty idea is out):
-`src/sim/genetics/{lineage,inheritance,traits}.ts`, `src/web/ui/{family-tree,memorial}.ts`,
-`src/worker/{lineage-sink,api/lineage}.ts`, and the `lineage*` / `ant` /
-`event_log` tables in `db/schema.sql`.
+**Deleted instead of built** (lineage is out, and with it D1, KV and cron; the
+Durable Object's own storage and alarms cover everything that remains):
+- `src/sim/genetics/` (all three files)
+- `src/web/ui/{family-tree,memorial,water-meter}.ts`, `src/web/net/api.ts`
+- `src/worker/{lineage-sink,cron}.ts`, `src/worker/api/{ants,lineage,pins,stats}.ts`
+- `db/` (schema, migrations, seed)
+- the D1 / KV / cron sections of `docs/cloudflare-setup.md`, `docs/data-model.md`
+  and `docs/architecture.md`. `wrangler.jsonc` has no `DB`, `CACHE` or
+  `triggers.crons` entries, so nothing to unwire there.
+- Keep `src/worker/router.ts` and `src/worker/api/actions.ts` for Phase 16.
 
 **Test:**
 - names are deterministic for a seed; two runs give identical names.
@@ -639,8 +646,7 @@ Done after Phase 15 so there are named ants worth pinning.
 - **Tune the economy against it.** The food economy was optimized for seed
   12345 with no outside food. Size the patch and allowance so visitors help but
   can't flatten the starvation / winter pressure.
-- `water` and `ui/water-meter.ts` are dropped from the plan unless you want
-  them back.
+- `water` is dropped from the plan unless you want it back.
 
 **Pins (client-only)**
 - A pin is an ant id kept in `localStorage` (`antfarm.pins`). No server table.

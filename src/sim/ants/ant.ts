@@ -42,7 +42,7 @@ export type Ant = {
     deliveringBrood?: boolean;
 };
 
-export function createWorker(id: AntId, position: Position, currentSeed: number): {ant: Ant; seed: number} {
+export function createWorker(id: AntId, name: string, position: Position, currentSeed: number): {ant: Ant; seed: number} {
     const workerLifespan = randomInt(currentSeed, MIN_LIFESPAN_TICKS, MAX_LIFESPAN_TICKS);
     const sleepPhase = randomInt(workerLifespan.seed, 0, SLEEP_CYCLE_TICKS - 1);
     // sleepPhase only staggers the FIRST nap (seeded here as the starting
@@ -55,7 +55,7 @@ export function createWorker(id: AntId, position: Position, currentSeed: number)
     return {
         ant: {
             id,
-            name: id,
+            name,
             caste: "WORKER",
             job: "NURSE",
             carrying: [],
@@ -76,13 +76,13 @@ export function createWorker(id: AntId, position: Position, currentSeed: number)
     };
 }
 
-export function createQueen(id: AntId, position: Position, currentSeed: number): {ant: Ant; seed: number} {
+export function createQueen(id: AntId, name: string, position: Position, currentSeed: number): {ant: Ant; seed: number} {
     const queenLifespan = randomInt(currentSeed, QUEEN_MIN_LIFESPAN_TICKS, QUEEN_MAX_LIFESPAN_TICKS);
     const sleepPhase = randomInt(queenLifespan.seed, 0, SLEEP_CYCLE_TICKS - 1);
     return {
         ant: {
             id,
-            name: id,
+            name,
             caste: "QUEEN",
             job: "NURSE",
             carrying: [],

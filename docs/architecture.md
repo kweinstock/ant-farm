@@ -12,15 +12,15 @@ forward even when nobody is watching ("persistent"). Visitors are thin clients
 that:
 
 - **watch** a live stream of colony state,
-- **nudge** it in a few allowed ways (drop food, drop water, pin an ant),
-- **browse** derived data (living-ant list, an ant's detail, family trees, the
-  roll of the dead).
+- **nudge** it in one allowed way (place a 2x2 patch of food),
+- **inspect** an ant (click it: name, job, age, time left) and **pin** ants they
+  want to come back to (client-only; a pin follows an ant's heir when it dies).
 
 Everything else — weather, day/night, seasons, temperature, predators, flooding,
 disease, death rolls — is **server-driven and visitors cannot touch it**. That
 boundary is enforced structurally: there is simply no API endpoint and no
 `VisitorInput` variant for those things (`src/sim/inputs.ts` accepts only
-`food` and `water`).
+`food`).
 
 The three hard problems are (a) a single shared mutable simulation, (b) a loop
 that runs without an always-on server, (c) real-time fan-out to many viewers. On
@@ -32,13 +32,12 @@ an `alarm()`.
    Browser ──────┤ Cloudflare Worker static assets  (src/web)   │
    (viewer)      │  served at kweinstock.dev/ant-farm/          │
                  └─────────────────────────────────────────────┘
-       │  REST  /ant-farm/api/ants, /pins, /actions, /lineage, /stats
+       │  REST  /ant-farm/api/actions   (place food; Phase 16)
        │  WS    /ant-farm/api/stream   (Hello + Snapshot + Diffs)
        ▼
    ┌───────────────────────────────────────────────────────────┐
    │ Worker  (src/worker/index.ts)                              │
    │  - routes requests, CORS, serves the built SPA             │
-   │  - read-only browsing  -> D1 / KV directly                 │
    │  - stream + mutations  -> the ONE Durable Object           │
    └───────────────────────────────────────────────────────────┘
        │ stub = env.COLONY.get(env.COLONY.idFromName("global-colony"))
@@ -50,17 +49,16 @@ an `alarm()`.
    │  - runs src/sim step() each tick                           │
    │  - broadcasts Diffs to hibernatable WebSockets             │
    │  - persists state to DO storage every N ticks              │
-   │  - streams births/deaths/lineage events to D1              │
    └───────────────────────────────────────────────────────────┘
-       │                                     │
-       ▼                                     ▼
-   DO storage (SQLite)                   D1 database (db/)
-   authoritative live snapshot        family trees, names, pins,
-   for crash / eviction recovery      event history, memorial
-       ▲
-       │ every 1 min: keepalive + nightly housekeeping
-   Cron Trigger ── hits Worker ── pings the DO
+       │
+       ▼
+   DO storage (SQLite)
+   authoritative live snapshot
+   for crash / eviction recovery
 ```
+
+There is no database, cache or cron: the Durable Object's storage and its own
+alarms are the whole backend.
 
 ---
 
@@ -74,9 +72,8 @@ signature without touching the Worker (see section 6).
 ```
 ant-farm/
 ├── index.html                  # SPA shell (loads the web bootstrap)
-├── package.json                # + scripts: db:migrate, test, deploy
-├── wrangler.jsonc              # add: main, [[durable_objects]], [[d1_databases]],
-│                               #      [[kv_namespaces]], [[migrations]], triggers.crons
+├── package.json                # + scripts: test, deploy
+├── wrangler.jsonc              # main, durable_objects, migrations, routes (+ env.testing)
 ├── vite.config.ts              # builds src/web -> dist/ (base /ant-farm/)
 │
 ├── docs/
@@ -84,12 +81,7 @@ ant-farm/
 │   ├── cloudflare-setup.md     # accounts, bindings, deploy, free-tier limits + math
 │   ├── simulation-model.md     # tick order, the rule list, emergent behaviors to watch
 │   ├── ant-biology.md          # the real-ant facts the model honors
-│   └── data-model.md           # what lives in DO storage vs D1 vs KV, and why
-│
-├── db/
-│   ├── schema.sql              # current D1 shape (reference)
-│   ├── migrations/0001_init.sql
-│   └── seed.sql                # optional founding queen
+│   └── data-model.md           # what lives in DO storage vs the browser, and why
 │
 ├── src/
 │   ├── shared/                 # types + constants imported by BOTH web and worker
@@ -126,13 +118,9 @@ ant-farm/
 │   │   │   ├── caste.ts        # larva fate: worker vs gyne vs drone (nutrition-driven)
 │   │   │   ├── nuptial.ts      # seasonal alates, nuptial flight, drones die after
 │   │   │   └── demography.ts   # cached population counts for the HUD
-│   │   ├── genetics/
-│   │   │   ├── traits.ts       # heritable bounded numbers
-│   │   │   ├── inheritance.ts  # queen + stored-sperm genome -> offspring traits + mutation
-│   │   │   └── lineage.ts      # parent->child edges, lineage id, extinction marks
 │   │   ├── names/
-│   │   │   ├── generator.ts    # deterministic name from (lineageId, birthIndex, rng)
-│   │   │   └── wordlists.ts    # syllables / given names / surnames
+│   │   │   ├── generator.ts    # given name = hash of the ant id (never the RNG); surname queue + heirs
+│   │   │   └── wordlists.ts    # given names / surnames
 │   │   ├── environment/
 │   │   │   ├── clock.ts        # simTime -> TimeOfDay
 │   │   │   ├── season.ts       # day-of-year -> Season (drives abundance + queen)
@@ -140,11 +128,11 @@ ant-farm/
 │   │   │   ├── temperature.ts  # base(season, timeOfDay) ± weather ± depth
 │   │   │   └── hazards.ts      # predator / flooding / cold snap / disease — visitor-proof
 │   │   ├── foraging.ts         # cross-view trip: exit -> surface search -> pickup -> return -> deliver to FOOD_STORE/queen
-│   │   ├── inputs.ts           # apply the ONLY allowed visitor actions (food, water)
-│   │   └── events.ts           # Birth / Death / CorpseInterred / LineageExtinct / QueenDied / …
+│   │   ├── inputs.ts           # apply the ONLY allowed visitor action (food)
+│   │   └── events.ts           # Birth / Death / CorpseInterred / QueenDied / …
 │   │
 │   ├── worker/                 # the deployed backend (runs in the same Worker)
-│   │   ├── index.ts            # fetch + scheduled handlers; DO resolution; asset passthrough
+│   │   ├── index.ts            # fetch handler; DO resolution; asset passthrough
 │   │   ├── router.ts           # tiny path router + JSON/CORS helpers + visitor-id header
 │   │   ├── colony-do.ts        # THE Durable Object: constructor / fetch / alarm / ws handlers
 │   │   ├── loop.ts             # ticksToRun(now, lastTick) capped by MAX_CATCHUP_TICKS
@@ -152,21 +140,14 @@ ant-farm/
 │   │   ├── connections.ts      # socket registry on the Hibernation API
 │   │   ├── inputs.ts           # validate + rate-limit + clamp visitor actions, queue for next tick
 │   │   ├── persistence.ts      # DO storage: save/load snapshot + seq + lastTick
-│   │   ├── lineage-sink.ts     # batched, best-effort export of events -> D1
-│   │   ├── cron.ts             # scheduled(): ping DO, nightly D1/KV housekeeping
 │   │   └── api/
-│   │       ├── ants.ts         # GET /ants (living list), GET /ants/:id (detail)
-│   │       ├── pins.ts         # GET / POST / DELETE /pins  (keyed by X-Visitor-Id)
-│   │       ├── actions.ts      # POST /actions/food | /actions/water -> DO
-│   │       ├── lineage.ts      # GET /lineage/:id (tree), GET /lineage (roll of the dead)
-│   │       └── stats.ts        # GET /stats (population, weather, water level) for the HUD
+│   │       └── actions.ts      # POST /actions/food -> DO
 │   │
 │   ├── web/                    # the browser client (built by Vite)
 │   │   ├── main.ts             # bootstrap: visitor id -> store -> socket -> render -> UI
 │   │   ├── config.ts           # API base, reconnect backoff, target FPS
 │   │   ├── net/
 │   │   │   ├── socket.ts       # WS to /stream: reconnect, resync, dispatch into store
-│   │   │   ├── api.ts          # REST fetch wrappers (+ X-Visitor-Id)
 │   │   │   └── visitor-id.ts   # anonymous UUID in localStorage — no accounts
 │   │   ├── state/
 │   │   │   ├── store.ts        # client mirror of the snapshot + diff reducers
@@ -184,13 +165,10 @@ ant-farm/
 │   │   │   └── sprites/atlas.ts # sprite-sheet loader + atlas coords
 │   │   ├── ui/
 │   │   │   ├── view-switch.ts  # farm view + surface view side-by-side / stacked; toggle on narrow screens
-│   │   │   ├── toolbar.ts      # Add food / Add water / Inspect tools
-│   │   │   ├── water-meter.ts  # tracked water level + this visitor's daily allowance
-│   │   │   ├── ant-list.ts     # scrollable list of living ants
-│   │   │   ├── ant-card.ts     # selected ant stats + lineage crumb + PIN button
-│   │   │   ├── pinned-tray.ts  # this visitor's pinned ants; drives the highlight ring
-│   │   │   ├── family-tree.ts  # lineage graph for an ant / a dynasty
-│   │   │   ├── memorial.ts     # roll of the dead — extinct lineages, notable ants
+│   │   │   ├── toolbar.ts      # place-food tool (Phase 16)
+│   │   │   ├── ant-list.ts     # optional list of ants (stub)
+│   │   │   ├── ant-card.ts     # clicked ant: name, job, time alive / left; follows its heir
+│   │   │   ├── pinned-tray.ts  # this visitor's pinned ants; drives the highlight ring (Phase 16)
 │   │   │   └── weather-hud.ts  # season, time, temperature, weather + forecast
 │   │   └── lib/
 │   │       ├── dom.ts          # tiny helpers
@@ -227,18 +205,17 @@ ant-farm/
    each → collects events.
 7. `broadcast.ts` builds a `Diff` from the previous snapshot and sends it to every
    live socket.
-8. `persistence.ts` writes the snapshot to DO storage every N ticks;
-   `lineage-sink.ts` flushes `Birth` / `Death` / name / extinction events to D1.
+8. `persistence.ts` writes the snapshot to DO storage every N ticks.
 9. `alarm()` schedules the next alarm → the loop runs forever with **zero
    always-on compute between ticks**.
-10. If Cloudflare evicts the object, the next request (or the Cron Trigger, every
-    minute) reconstructs it from DO storage and re-arms the alarm. The sim
+10. If Cloudflare evicts the object, the next request or its own alarm
+    reconstructs it from DO storage and re-arms the alarm. The sim
     **replays elapsed wall-clock time** on wake (that is why `step()` must be
     deterministic), so no tick is truly lost.
 
 ### A visitor acts
 
-11. Toolbar → `net/api.ts` POSTs `/ant-farm/api/actions/food` with the
+11. Toolbar POSTs `/ant-farm/api/actions/food` (Phase 16) with the
     `X-Visitor-Id` header.
 12. Worker forwards to `ColonyDO.fetch()` → `worker/inputs.ts` validates,
     rate-limits per visitor and globally, clamps the amount, and queues it.
@@ -246,19 +223,18 @@ ant-farm/
     `sim/inputs.ts`), so the shared state stays consistent.
 14. The effect appears in the next `Diff` to everyone.
 
-### Pins and browsing (kept off the DO's hot path)
+### Inspecting and pinning (no server round trip)
 
-15. `/api/pins`, `/api/ants`, `/api/lineage`, `/api/stats` read/write **D1**
-    (and optionally **KV** cache) directly from the Worker. Pins are rows keyed
-    by `visitor_id`. The client highlights pinned ants that are still alive by
-    cross-referencing the live snapshot.
+15. Clicking an ant opens `ant-card.ts` from the state the client already has.
+    Pins are ant ids in `localStorage`; when a pinned ant dies the pin moves to
+    its heir (`state.heirs`). Nothing here costs a request.
 
 ### Server-only changes
 
 16. `sim/environment/*` and `sim/environment/hazards.ts` run purely inside
     `step()`. No API path lets a visitor set weather, season, temperature, or
     spawn/remove predators — enforced by not exposing endpoints and by
-    `sim/inputs.ts` accepting only `food` / `water`.
+    `sim/inputs.ts` accepting only `food`.
 
 ---
 
@@ -270,21 +246,16 @@ ant-farm/
 | `src/worker` | **Workers** | API routing, input validation, read endpoints, DO resolution | ~100k requests/day; small CPU budget per request — keep heavy work in the `alarm()` |
 | `ColonyDO` | **Durable Objects** (SQLite-backed class) | The single authoritative colony: in-memory state, `alarm()` tick loop, WebSocket hibernation, transactional storage | SQLite-backed DOs are on the **free** Workers plan; the older key-value-only DO classes are **not**. Use `new_sqlite_classes` in the migration. |
 | live updates | **WebSockets via DO Hibernation API** | Push `Snapshot` / `Diff` to viewers | Idle hibernating sockets don't bill duration; inbound connections/messages count toward request limits; server→client broadcasts are cheap |
-| `db/` | **D1** | Family trees, ant names, lineage history, pins, event log, memorial | Free: multi-GB storage, millions of row reads/day, ~100k row writes/day — **batch** the lineage writes |
-| `CACHE` (optional) | **Workers KV** | Cached "living ants" page, most-pinned leaderboard, latest public snapshot | Free: ~100k reads/day, ~1k writes/day — write once per minute, never per tick |
-| keepalive + housekeeping | **Cron Triggers** | Ping the DO so the alarm survives eviction; nightly D1 compaction / KV refresh | Free; minimum interval 1 minute |
-
 **Request-budget math to design around.** An `alarm()` every 2s is ~43k
 invocations/day just for ticks; every 5s is ~17k/day; every 10s is ~8.6k/day.
 Pick `TICK_MS` (in `src/shared/constants.ts`) so `ticks + expected visitor
-traffic + cron` stay under the ~100k/day Workers cap, and treat the Cron Trigger
-as a safety net rather than the primary clock. If it gets popular, the Workers
+traffic` stay under the ~100k/day Workers cap. If it gets popular, the Workers
 Paid plan (~$5/mo) raises every limit and gives the alarm a much larger CPU
 budget — no architecture change required.
 
 What you do **not** need: a VPS, a container, a separate Node server, Pages
 Functions, Queues, R2, or Durable Object "colocation" tricks. One Worker + one
-Durable Object + D1 + Cron is the whole backend.
+Durable Object is the whole backend.
 
 See `docs/cloudflare-setup.md` for the step-by-step.
 
@@ -295,11 +266,8 @@ See `docs/cloudflare-setup.md` for the step-by-step.
 | Store | Holds | Access pattern | Why here |
 | --- | --- | --- | --- |
 | **DO storage** (SQLite in the Durable Object) | the live `ColonyState` snapshot, `lastTick`, `seq` | single-writer, transactional, read once on wake | fast, consistent, no cross-request contention |
-| **D1** | `ant`, `lineage`, `lineage_edge`, `pin`, `event_log`, `visitor_action` | many readers (lists, trees, memorial), batched writes | relational queries + cross-visitor data the sim doesn't need in memory |
-| **KV** (optional) | cached living-ants page, most-pinned leaderboard, public snapshot mirror | high-read, tolerates ~60s staleness | shields D1 and the DO from browse traffic |
-
-Rule of thumb: **DO storage = the simulation. D1 = its history. KV = cheap stale
-reads.**
+Rule of thumb: **DO storage = the simulation. localStorage = what a visitor keeps
+for themselves.**
 
 ---
 
@@ -311,7 +279,7 @@ There is no second language, and that is the deliberate choice, not a default.
 **Why not split the sim into Rust/WASM:**
 
 - The genuinely hard code is the Durable Object lifecycle, `alarm()` scheduling,
-  WebSocket hibernation, D1 batching, and hibernation-replay — all TS-first APIs.
+  WebSocket hibernation, and hibernation-replay — all TS-first APIs.
   A language boundary through the middle of that is friction with no early payoff.
 - `src/shared/protocol.ts` is imported directly by the sim, the worker, and the
   browser. A WASM core would mean serializing across the JS↔WASM boundary every
@@ -349,4 +317,3 @@ the DO replay elapsed time after waking from hibernation.
 - Snapshot/diff encoding: JSON to start (simple), binary later (bandwidth).
 - Whether new queens leaving on nuptial flights are just "emigration + a note" or
   eventually seed sibling colonies (out of scope for v1).
-- How aggressively to cache browse endpoints in KV vs hitting D1.

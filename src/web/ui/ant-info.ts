@@ -5,6 +5,8 @@
 // stays true to what this specific simulation does. A static modal, not
 // live data (ui/dashboard-stats.ts already covers the live numbers) — this
 // is the "what am I looking at" explainer, shown once and dismissed.
+import { setIcon } from "./icons";
+
 const SECTIONS: { title: string; body: string }[] = [
     {
         title: "Castes",
@@ -113,33 +115,72 @@ function injectStyles(): void {
         .ant-farm-info-backdrop[hidden] {
             display: none;
         }
+        /* Same palette as the panels and the ant card. */
         .ant-farm-info-modal {
-            background: #201810;
-            color: #f0e6d2;
-            border: 1px solid rgba(200, 184, 152, 0.4);
-            border-radius: 8px;
-            max-width: 34rem;
-            max-height: 85vh;
+            box-sizing: border-box;
+            width: min(34rem, 100%);
+            max-height: calc(100vh - 3rem);
+            max-height: calc(100dvh - 3rem);
             overflow-y: auto;
-            padding: 1.25rem 1.5rem;
-            font: 13px/1.5 sans-serif;
+            background: rgba(26, 20, 12, 0.96);
+            border: 1px solid rgba(200, 184, 152, 0.4);
+            border-top: 3px solid #c8b898;
+            border-radius: 10px;
+            box-shadow: 0 6px 22px rgba(0, 0, 0, 0.4);
+            color: #f0e6d2;
+            font: 13px/1.55 sans-serif;
+            padding: 0.9rem 1.1rem 1.2rem;
+        }
+        /* The exit button lives in the first line of the text, so it scrolls
+           away with it rather than staying pinned to the screen. */
+        .ant-farm-info-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 0.75rem;
         }
         .ant-farm-info-modal h2 {
-            margin: 0 0 0.75rem;
-            font-size: 1.1rem;
+            margin: 0;
+            font-family: Georgia, "Times New Roman", serif;
+            font-size: 1.25rem;
+            line-height: 1.2;
+        }
+        .ant-farm-info-sub {
+            margin-top: 0.15rem;
+            font-size: 0.7rem;
+            color: #c8b898;
+        }
+        .ant-farm-info-close {
+            flex: none;
+            width: 2rem;
+            height: 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            border: 1px solid rgba(200, 184, 152, 0.5);
+            background: rgba(240, 230, 210, 0.08);
+            color: #f0e6d2;
+            cursor: pointer;
+            padding: 0;
+        }
+        .ant-farm-info-close:hover { background: rgba(240, 230, 210, 0.2); }
+        .ant-farm-info-section {
+            margin-top: 0.85rem;
+            padding-top: 0.6rem;
+            border-top: 1px solid rgba(200, 184, 152, 0.18);
         }
         .ant-farm-info-modal h3 {
-            margin: 1rem 0 0.25rem;
-            font-size: 0.85rem;
+            margin: 0 0 0.3rem;
+            font-size: 0.66rem;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
             color: #e0c890;
         }
         .ant-farm-info-modal p {
             margin: 0;
-        }
-        .ant-farm-info-close {
-            margin-top: 1.25rem;
-            font: 0.8rem sans-serif;
-            padding: 0.3rem 0.8rem;
+            color: #e6d9bd;
         }
     `;
     document.head.appendChild(style);
@@ -159,23 +200,33 @@ export function mountAntInfo(container: HTMLElement): AntInfoPanel {
     const modal = document.createElement("div");
     modal.className = "ant-farm-info-modal";
 
+    const head = document.createElement("div");
+    head.className = "ant-farm-info-head";
+    const titles = document.createElement("div");
     const heading = document.createElement("h2");
     heading.textContent = "About the colony";
-    modal.append(heading);
+    const sub = document.createElement("div");
+    sub.className = "ant-farm-info-sub";
+    sub.textContent = "How this simulated colony actually works";
+    titles.append(heading, sub);
+    const closeButton = document.createElement("button");
+    closeButton.type = "button";
+    closeButton.className = "ant-farm-info-close";
+    closeButton.setAttribute("aria-label", "Close");
+    setIcon(closeButton, "close", 0.85);
+    head.append(titles, closeButton);
+    modal.append(head);
 
     for (const { title, body } of SECTIONS) {
+        const section = document.createElement("div");
+        section.className = "ant-farm-info-section";
         const h3 = document.createElement("h3");
         h3.textContent = title;
         const p = document.createElement("p");
         p.textContent = body;
-        modal.append(h3, p);
+        section.append(h3, p);
+        modal.append(section);
     }
-
-    const closeButton = document.createElement("button");
-    closeButton.type = "button";
-    closeButton.className = "ant-farm-info-close";
-    closeButton.textContent = "Close";
-    modal.append(closeButton);
 
     backdrop.append(modal);
     container.appendChild(backdrop);
@@ -190,9 +241,17 @@ export function mountAntInfo(container: HTMLElement): AntInfoPanel {
     backdrop.addEventListener("click", close);
     modal.addEventListener("click", (event) => event.stopPropagation());
 
+    // Escape closes it too (only while it is open).
+    window.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && !backdrop.hidden) {
+            close();
+        }
+    });
+
     return {
         open: () => {
             backdrop.hidden = false;
+            modal.scrollTop = 0;
         },
     };
 }

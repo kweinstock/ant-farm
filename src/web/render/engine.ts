@@ -48,12 +48,16 @@
 // the cube only (not its tree/rock children — see the props import below),
 // maps the hit point back to a tile via cube-layout.ts, and picks the
 // nearest interpolated ant on whichever face was hit. Picking one tweens
-// the camera in close and hides render/props.ts's surface props — "a way to
-// make them invisible as you zoom into ants." "Reset view" (and clicking
-// the cube again with no ant nearby) tweens back out and brings them back.
-// Camera framing here doesn't continue tracking the ant after the tween
-// settles — a fixed close-up, not a live follow-cam; that's a reasonable
-// next refinement, not required for this pass.
+// the camera in close; the surface props (trees, rocks) stay where they are.
+// "Reset view" (and clicking the cube again with no ant nearby) tweens back
+// out.
+//
+// PHASE 15: the focused ant is FOLLOWED. Every frame the camera and orbit
+// target are moved by however far the ant moved, so the view keeps whatever
+// angle/zoom the visitor orbits to. If the ant crosses between the nest and
+// surface faces, the camera re-frames onto the other face with a new tween.
+// focusAnt(id) does the same from outside (the cycle buttons, an heir taking
+// over a dead ant's card); onAntPicked reports clicks the other way.
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { ColonyState } from "../../sim/state";
@@ -107,6 +111,11 @@ export type FrameSource = {
 
 export type SceneHandle = {
     resetCamera: () => void;
+    // Frame and follow this ant, as if it had been clicked (without reporting it
+    // back through onAntPicked). A no-op if the ant isn't being drawn.
+    focusAnt: (antId: AntId) => void;
+    // Zoom back out and stop following — what clicking empty ground does.
+    exitFocus: () => void;
 };
 
 type FocusTween = {
@@ -122,6 +131,9 @@ export function startRenderLoop(
     container: HTMLElement,
     frame: FrameSource,
     renderOptions: RenderOptions,
+    // PHASE 15: told which ant a click picked (undefined = nothing picked, or the
+    // view was reset). The ant card (ui/ant-card.ts) is the only listener.
+    onAntPicked?: (antId: AntId | undefined) => void,
 ): SceneHandle {
     const scene = new THREE.Scene();
     // Redrawn every frame from state.env (see sky.ts's header) — an empty
@@ -318,6 +330,17 @@ export function startRenderLoop(
 
     let focused = false;
     let focusTween: FocusTween | undefined;
+    // The ant the camera is following, and which cube face it was last framed on.
+    let followId: AntId | undefined;
+    let followFace: "surface" | "nest" | undefined;
+
+    function antWorldPos(renderAnt: RenderAnt, face: "surface" | "nest"): THREE.Vector3 {
+        const local =
+            face === "surface"
+                ? surfaceTileToLocal(renderAnt.x, renderAnt.y, surfaceGrid, dims)
+                : nestTileToLocal(renderAnt.x, renderAnt.y, nestGrid, dims);
+        return cube.localToWorld(new THREE.Vector3(local.x, local.y, local.z));
+    }
 
     function startTween(toPos: THREE.Vector3, toTarget: THREE.Vector3): void {
         focusTween = {
@@ -336,11 +359,7 @@ export function startRenderLoop(
             return;
         }
 
-        const local =
-            face === "surface"
-                ? surfaceTileToLocal(renderAnt.x, renderAnt.y, surfaceGrid, dims)
-                : nestTileToLocal(renderAnt.x, renderAnt.y, nestGrid, dims);
-        const targetWorld = cube.localToWorld(new THREE.Vector3(local.x, local.y, local.z));
+        const targetWorld = antWorldPos(renderAnt, face);
 
         // Surface ants stand upright — a shallow elevation here keeps the
         // view close to the ant's own eye level, so the standing card
@@ -354,7 +373,8 @@ export function startRenderLoop(
 
         startTween(posWorld, targetWorld);
         focused = true;
-        surfaceProps.setVisible(false);
+        followId = antId;
+        followFace = face;
     }
 
     function exitFocus(): void {
@@ -362,8 +382,9 @@ export function startRenderLoop(
             return;
         }
         focused = false;
+        followId = undefined;
+        followFace = undefined;
         startTween(initialCameraPos, initialTarget);
-        surfaceProps.setVisible(true);
     }
 
     const raycaster = new THREE.Raycaster();
@@ -396,6 +417,7 @@ export function startRenderLoop(
         }
 
         if (face === undefined || tile === undefined) {
+            onAntPicked?.(undefined);
             exitFocus();
             return;
         }
@@ -414,10 +436,12 @@ export function startRenderLoop(
         }
 
         if (nearestId === undefined) {
+            onAntPicked?.(undefined);
             exitFocus();
             return;
         }
 
+        onAntPicked?.(nearestId);
         enterFocus(nearestId, face);
     }
 
@@ -478,6 +502,27 @@ export function startRenderLoop(
         ambientLight.intensity = light.intensity;
         surfaceProps.updateSeason(curr.env.season);
 
+        if (followId !== undefined && followFace !== undefined) {
+            const followed = latestRenderAnts.get(followId);
+            if (followed) {
+                if (followed.where !== followFace) {
+                    // Went through the exit (or back in): re-frame on the other face.
+                    enterFocus(followId, followed.where);
+                } else {
+                    const target = antWorldPos(followed, followFace);
+                    if (focusTween) {
+                        // Mid-zoom: keep the tween's destination glued to the ant.
+                        const offset = focusTween.toPos.clone().sub(focusTween.toTarget);
+                        focusTween.toTarget.copy(target);
+                        focusTween.toPos.copy(target).add(offset);
+                    } else {
+                        camera.position.add(target.clone().sub(controls.target));
+                        controls.target.copy(target);
+                    }
+                }
+            }
+        }
+
         if (focusTween) {
             const elapsed = performance.now() - focusTween.start;
             const alpha = Math.min(1, elapsed / focusTween.duration);
@@ -499,12 +544,21 @@ export function startRenderLoop(
 
     return {
         resetCamera: () => {
+            onAntPicked?.(undefined);
             focusTween = undefined;
             focused = false;
-            surfaceProps.setVisible(true);
+            followId = undefined;
+            followFace = undefined;
             camera.position.copy(initialCameraPos);
             controls.target.copy(initialTarget);
             controls.update();
+        },
+        exitFocus,
+        focusAnt: (antId) => {
+            const renderAnt = latestRenderAnts.get(antId);
+            if (renderAnt) {
+                enterFocus(antId, renderAnt.where);
+            }
         },
     };
 }

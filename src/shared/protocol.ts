@@ -28,10 +28,7 @@ export interface AntDTO {
     energy: number;
     ageTicks: number;
     asleep: boolean;
-    // Dashboard reads the queen's age against this ("age/lifespan").
     lifespanTicks: number;
-    // The corpse this ant is currently assigned to haul, if any (dashboard counts
-    // undertakers; behavior.ts's idle check also keys off it).
     undertaking?: CorpseId;
 }
 
@@ -40,8 +37,6 @@ export interface BroodDTO {
     stage: BroodStage;
     x: number;
     y: number;
-    // Read by render/brood-props.ts: a carried egg follows its nurse instead
-    // of sitting at its own (stale) tile.
     carriedBy?: AntId;
 }
 
@@ -50,7 +45,6 @@ export interface CorpseDTO {
     where: "nest" | "surface";
     x: number;
     y: number;
-    // Read by render/corpse-props.ts and ant-props.ts (undertaker carrying).
     carriedBy?: AntId;
 }
 
@@ -121,12 +115,8 @@ export interface SnapshotDTO {
     foodPiles: FoodPileDTO[];
     foodStore: { amount: number; capacity: number };
     env: SnapshotEnvDTO;
-    // The surface graveyard rect — the colony can relocate it (decisions.ts), and
-    // "corpses pending" and the render both depend on where it is.
     graveyard: RectDTO;
-    // The next two are attached by the Durable Object (worker/colony-do.ts), not by
-    // toSnapshot: they're big and change rarely (nest) or only matter once per
-    // batch (pheromones). Both are carried forward by applyDiff until replaced.
+    heirs: Record<AntId, AntId>;
     pheromones?: PheromonesDTO;
     nest?: NestDTO;
 }
@@ -157,13 +147,11 @@ export interface Diff {
     foodStore?: { amount: number; capacity: number };
     env?: SnapshotEnvDTO;
     graveyard?: RectDTO;
-    // Attached to the LAST frame of each batch only (pheromones change every tick
-    // but a 5 s refresh is plenty for an overlay and a dashboard count).
+    // Only the entries added or changed this tick (a hatch adds one), not the
+    // whole map. applyDiff merges them in and re-applies the cap.
+    heirs?: Record<AntId, AntId>;
     pheromones?: PheromonesDTO;
-    // Attached to the frame in which the nest layout changed (a dig finished).
     nest?: NestDTO;
-    // This tick's countable events (deaths, births, forage departures, predator
-    // strikes — see statEvents in shared/tally.ts). Omitted when there were none.
     events?: SimEvent[];
 }
 
@@ -182,8 +170,7 @@ export function isServerMessage(value: unknown): value is ServerMessage {
     return kind === "hello" || kind === "snapshot" || kind === "batch";
 }
 
-// ---- Not yet defined this phase ----
-// ActionAck   {actionId, accepted, reason?}
+// ---- Not yet defined ----
+// ActionAck   {actionId, accepted, reason?}   (Phase 16, visitor actions)
 // Error       {code, message}
 // Subscribe   {viewport?}   (client -> server)
-// AntSummary / AntDetail / LineageNode / PinList / Stats   REST DTOs — Phase 16/17

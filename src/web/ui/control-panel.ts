@@ -15,6 +15,8 @@ import type { ColonyState } from "../../sim/state";
 import type { TuningStats } from "../main";
 import { buildStatsSections } from "./dashboard-stats";
 import { mountAntInfo } from "./ant-info";
+import { MOBILE_MAX_WIDTH, NAV_HEIGHT_REM, DOCK_OFFSET_REM } from "./layout";
+import type { NavScreen } from "./nav-bar";
 
 const TRAILS_KEY = "ant-farm-show-trails";
 const PATCHES_KEY = "ant-farm-show-patches";
@@ -52,6 +54,11 @@ export type RenderOptions = {
 export type ControlPanel = {
     renderOptions: RenderOptions;
     onResetView: (handler: () => void) => void;
+    // Phone layout: show the panel as a sheet for this screen ("colony" = time,
+    // weather and the stats dashboard; "view" = camera/overlay toggles), or hide
+    // it with null. Desktop never calls this.
+    setScreen: (screen: NavScreen | null) => void;
+    openInfo: () => void;
     update: (state: ColonyState, stats: TuningStats) => void;
 };
 
@@ -91,25 +98,52 @@ function injectStyles(): void {
 
     const style = document.createElement("style");
     style.textContent = `
+        /* The panel is a popover above the dock (ui/nav-bar.ts), one screen at a
+           time, hidden until a dock button is chosen. */
         .ant-farm-panel {
+            position: fixed;
+            display: none;
+            left: 50%;
+            transform: translateX(-50%);
+            bottom: ${DOCK_OFFSET_REM}rem;
+            z-index: 1000;
+            box-sizing: border-box;
+            width: min(40rem, calc(100vw - 2rem));
+            max-height: calc(100vh - ${DOCK_OFFSET_REM + 3}rem);
+            overflow-y: auto;
+            background: rgba(26, 20, 12, 0.9);
+            border: 1px solid rgba(200, 184, 152, 0.4);
+            border-radius: 12px;
+            box-shadow: 0 6px 22px rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(4px);
+            color: #f0e6d2;
+            font: 13px/1.4 sans-serif;
+            padding: 0.8rem 0.9rem;
+        }
+        .ant-farm-panel[data-screen="colony"],
+        .ant-farm-panel[data-screen="view"] { display: block; }
+        /* The view screen is just a row of buttons — no need for the full width. */
+        .ant-farm-panel[data-screen="view"] { width: fit-content; max-width: calc(100vw - 2rem); }
+
+        /* The always-on title + time/season/weather strip, top left (wide screens;
+           on a phone these live in the Colony screen instead). */
+        .ant-farm-hud {
             position: fixed;
             top: 0.6rem;
             left: 0.6rem;
             z-index: 1000;
-            width: min(20rem, calc(100vw - 1.2rem));
-            max-height: calc(100vh - 1.2rem);
-            overflow-y: auto;
-            transition: width 0.15s ease;
+            display: flex;
+            align-items: center;
+            gap: 1.1rem;
             background: rgba(26, 20, 12, 0.82);
             border: 1px solid rgba(200, 184, 152, 0.4);
-            border-radius: 8px;
+            border-radius: 10px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
             color: #f0e6d2;
             font: 13px/1.4 sans-serif;
-            padding: 0.6rem 0.7rem;
+            padding: 0.45rem 0.8rem;
         }
-        .ant-farm-panel--wide {
-            width: min(38rem, calc(100vw - 1.2rem));
-        }
+        .ant-farm-hud-env { display: flex; align-items: center; gap: 0.9rem; font-size: 0.75rem; }
         .ant-farm-panel-title-row {
             display: flex;
             align-items: flex-start;
@@ -229,6 +263,40 @@ function injectStyles(): void {
             overflow-x: auto;
             color: #f0e6d2;
         }
+
+        /* Wide screens: the title and env strip are in the HUD, so the popover is
+           just the screen's own content. */
+        .ant-farm-panel-title-row,
+        .ant-farm-panel-env { display: none; }
+        .ant-farm-panel[data-screen="colony"] .ant-farm-panel-controls,
+        .ant-farm-panel[data-screen="colony"] .ant-farm-panel-dashboard-header,
+        .ant-farm-panel[data-screen="view"] .ant-farm-panel-dashboard { display: none; }
+        .ant-farm-panel-dashboard { border-top: none; margin-top: 0; padding-top: 0; }
+
+        /* Phone layout: a full-width sheet above the bottom bar, and the HUD folds
+           into the Colony screen. */
+        @media (max-width: ${MOBILE_MAX_WIDTH}px) {
+            .ant-farm-hud { display: none; }
+            .ant-farm-panel {
+                left: 0.5rem;
+                right: 0.5rem;
+                transform: none;
+                bottom: calc(${NAV_HEIGHT_REM}rem + env(safe-area-inset-bottom, 0px) + 0.5rem);
+                width: auto;
+                max-height: 52vh;
+                max-height: 52dvh;
+                padding: 0.8rem 0.9rem;
+            }
+            .ant-farm-panel[data-screen="colony"] .ant-farm-panel-title-row { display: flex; }
+            .ant-farm-panel[data-screen="colony"] .ant-farm-panel-env { display: flex; }
+            .ant-farm-panel[data-screen="colony"] .ant-farm-panel-icon-btn,
+            .ant-farm-panel[data-screen="view"] .ant-farm-panel-icon-btn { display: none; }
+            .ant-farm-panel[data-screen="view"] .ant-farm-panel-title-row { display: flex; }
+            .ant-farm-panel[data-screen="view"] .ant-farm-panel-subtitle { display: none; }
+            .ant-farm-panel-dashboard { margin-top: 0.5rem; }
+            .ant-farm-panel-dashboard-body { columns: 1; }
+            .ant-farm-panel-btn { font-size: 0.85rem; padding: 0.55rem 0.8rem; }
+        }
     `;
     document.head.appendChild(style);
 }
@@ -343,12 +411,16 @@ export function mountControlPanel(container: HTMLElement): ControlPanel {
     dashboardBody.className = "ant-farm-panel-dashboard-body";
 
     let dashboardOpen = readStoredBool(DASHBOARD_KEY, false);
+    // The phone's Colony screen always shows the stats, whatever the desktop
+    // toggle was left at (which is what gets stored).
+    let forceDashboard = false;
+    const dashboardShown = (): boolean => dashboardOpen || forceDashboard;
     function applyDashboardVisibility(): void {
         dashboardHeader.textContent = `${dashboardOpen ? "▾" : "▸"} Dashboard`;
-        dashboardBody.hidden = !dashboardOpen;
+        dashboardBody.hidden = !dashboardShown();
         // Only the two-column stats need the wider panel — collapsed, it
         // should shrink back to just fit the title/controls.
-        panel.classList.toggle("ant-farm-panel--wide", dashboardOpen);
+        panel.classList.toggle("ant-farm-panel--wide", dashboardShown());
         writeStoredBool(DASHBOARD_KEY, dashboardOpen);
     }
     dashboardHeader.addEventListener("click", () => {
@@ -361,6 +433,26 @@ export function mountControlPanel(container: HTMLElement): ControlPanel {
 
     panel.append(titleRow, envStrip, controls, dashboard);
     container.appendChild(panel);
+
+    // ---- HUD (wide screens): title + env strip, always visible ----
+    const hud = document.createElement("div");
+    hud.className = "ant-farm-hud";
+    const hudTitle = document.createElement("div");
+    const hudName = document.createElement("div");
+    hudName.className = "ant-farm-panel-title";
+    hudName.textContent = "Global Ant Farm";
+    const hudSub = document.createElement("div");
+    hudSub.className = "ant-farm-panel-subtitle";
+    hudSub.textContent = "Currently in the testing phase";
+    hudTitle.append(hudName, hudSub);
+    const hudEnv = document.createElement("div");
+    hudEnv.className = "ant-farm-hud-env";
+    const hudTime = buildEnvRow();
+    const hudSeason = buildEnvRow();
+    const hudWeather = buildEnvRow();
+    hudEnv.append(hudTime.row, hudSeason.row, hudWeather.row);
+    hud.append(hudTitle, hudEnv);
+    container.appendChild(hud);
 
     const info = mountAntInfo(container);
     infoButton.addEventListener("click", () => info.open());
@@ -380,6 +472,16 @@ export function mountControlPanel(container: HTMLElement): ControlPanel {
         onResetView: (handler: () => void) => {
             resetHandler = handler;
         },
+        setScreen: (screen: NavScreen | null) => {
+            if (screen === null) {
+                panel.removeAttribute("data-screen");
+            } else {
+                panel.setAttribute("data-screen", screen);
+            }
+            forceDashboard = screen === "colony";
+            applyDashboardVisibility();
+        },
+        openInfo: () => info.open(),
         update: (state: ColonyState, stats: TuningStats) => {
             const { env } = state;
             timeRow.dot.style.background = TIME_COLOR[env.timeOfDay];
@@ -388,8 +490,14 @@ export function mountControlPanel(container: HTMLElement): ControlPanel {
             seasonRow.label.textContent = SEASON_LABEL[env.season];
             weatherRow.dot.style.background = WEATHER_COLOR[env.weather.kind];
             weatherRow.label.textContent = env.weather.kind;
+            hudTime.dot.style.background = timeRow.dot.style.background;
+            hudTime.label.textContent = timeRow.label.textContent;
+            hudSeason.dot.style.background = seasonRow.dot.style.background;
+            hudSeason.label.textContent = seasonRow.label.textContent;
+            hudWeather.dot.style.background = weatherRow.dot.style.background;
+            hudWeather.label.textContent = weatherRow.label.textContent;
 
-            if (dashboardOpen) {
+            if (dashboardShown()) {
                 dashboardBody.replaceChildren(
                     ...buildStatsSections(state, stats).map(({ title, lines }) => {
                         const section = document.createElement("div");

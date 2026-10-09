@@ -10,6 +10,7 @@ import type { Position } from "./world/grid";
 import { createSurface, type Surface } from "./world/surface";
 import type { Grid } from "./world/grid";
 import { type Ant, type AntId, createQueen, createWorker } from "./ants/ant";
+import { givenNameFor, fullName, founderSurname } from "./names/generator";
 import type { Brood } from "./colony/brood";
 import type { Corpse } from "./corpses";
 import { FOOD_STORE_CAP, GRID_HEIGHT, GRID_WIDTH, STARTER_WORKER_COUNT, STARTING_FOOD_STORE, SURFACE_HEIGHT, SURFACE_WIDTH } from "./params";
@@ -49,6 +50,11 @@ export type ClimateOverride = {
     predatorAlways?: boolean;
 };
 
+export type SurnameVacancy = {
+    deadId: AntId;
+    surname: string;
+}
+
 export type ColonyState = {
     seq: number;
     simTime: number;
@@ -65,6 +71,8 @@ export type ColonyState = {
     corpses: Corpse[];
     nextCorpseId: number;
     foodStore: { amount: number; capacity: number };
+    surnameQueue: SurnameVacancy[];
+    heirs: Record<AntId, AntId>;
     climateOverride?: ClimateOverride;
     pendingDigPlan?: DigPlan;
 };
@@ -96,7 +104,7 @@ export function createInitialState(seed: number, climateOverride?: ClimateOverri
     const queenId = `queen-ant-${nextAntId++}`;
     const queenChamber = chambersOf(nest, "QUEEN")[0];
     const queenStart: Position = queenChamber ? chamberCenter(queenChamber) : {x: 0, y: 0};
-    const queen = createQueen(queenId, queenStart, currentSeed)
+    const queen = createQueen(queenId, fullName(givenNameFor(queenId), founderSurname(0)), queenStart, currentSeed)
     currentSeed = queen.seed;
     ants.set(queenId, queen.ant);
 
@@ -104,7 +112,7 @@ export function createInitialState(seed: number, climateOverride?: ClimateOverri
 
     for (let i = 0; i < STARTER_WORKER_COUNT; i++) {
         const workerId = `ant-${nextAntId++}`;
-        const worker = createWorker(workerId, commonTiles[i % commonTiles.length], currentSeed);
+        const worker = createWorker(workerId, fullName(givenNameFor(workerId), founderSurname(i + 1)), commonTiles[i % commonTiles.length], currentSeed);
         currentSeed = worker.seed;
         ants.set(workerId, worker.ant);
     }
@@ -146,6 +154,8 @@ export function createInitialState(seed: number, climateOverride?: ClimateOverri
             amount: STARTING_FOOD_STORE,
             capacity: FOOD_STORE_CAP,
         },
+        surnameQueue: [],
+        heirs: {},
         climateOverride,
     };
 }
@@ -217,6 +227,7 @@ export function toSnapshot(state: ColonyState): SnapshotDTO {
         })),
         foodStore: { amount: state.foodStore.amount, capacity: state.foodStore.capacity },
         graveyard: { ...state.surface.graveyard },
+        heirs: {...state.heirs},
         env: {
             season: state.env.season,
             weather: state.env.weather.kind,

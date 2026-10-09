@@ -36,6 +36,19 @@ function keyedDiff<T extends { id: string }>(prev: T[], next: T[]): { upserted: 
     return { upserted, removed };
 }
 
+// Entries of `next` that are new or changed vs `prev`. heirs only ever grows by
+// a hatch (plus the cap dropping old keys, which a client re-derives itself),
+// so this is empty on almost every tick.
+function newHeirs(prev: Record<string, string>, next: Record<string, string>): Record<string, string> | undefined {
+    let added: Record<string, string> | undefined;
+    for (const [deadId, heirId] of Object.entries(next)) {
+        if (prev[deadId] !== heirId) {
+            (added ??= {})[deadId] = heirId;
+        }
+    }
+    return added;
+}
+
 export function computeDiff(prev: SnapshotDTO, next: SnapshotDTO): Diff {
     const ants = keyedDiff<AntDTO>(prev.ants, next.ants);
     const brood = keyedDiff<BroodDTO>(prev.brood, next.brood);
@@ -63,6 +76,7 @@ export function computeDiff(prev: SnapshotDTO, next: SnapshotDTO): Diff {
         foodStore: foodChanged ? next.foodStore : undefined,
         env: envChanged ? next.env : undefined,
         graveyard: graveyardChanged ? next.graveyard : undefined,
+        heirs: newHeirs(prev.heirs, next.heirs),
     };
 }
 

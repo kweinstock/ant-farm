@@ -14,7 +14,7 @@ import type { ColonyState } from "./state";
 import type { Chamber } from "./world/nest";
 import { nestFromChambers } from "./world/nest";
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export type EncodedState = Omit<ColonyState, "nest"> & {nest: {chambers: Chamber[]}};
 

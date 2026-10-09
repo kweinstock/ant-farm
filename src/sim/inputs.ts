@@ -8,4 +8,4 @@
 //
 // Rejects anything out of bounds or off-surface. Amounts are already clamped by
 // src/worker/inputs.ts before they get here; this is the second guard.
-// Pins are NOT handled here — they are pure client/D1 state and never touch the sim.
+// Pins are NOT handled here — they are pure client state (localStorage) and never touch the sim.

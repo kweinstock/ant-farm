@@ -13,6 +13,7 @@ import { isServerMessage, type Hello, type SnapshotDTO, type Diff } from "../../
 import { PROTOCOL_VERSION, TICK_MS } from "../../shared/constants";
 import type { SimEvent } from "../../sim";
 import type { Tally } from "../../shared/tally";
+import { HEIRS_CAP } from "../../sim/names/generator";
 
 // A Batch delivers ~25 ticks at once and they play back one per TICK_MS. If
 // frames pile up (background tabs throttle timers to ~1/s), fast-forward
@@ -49,6 +50,16 @@ export function applyDiff(prev: SnapshotDTO, diff: Diff): SnapshotDTO {
     for (const p of diff.foodPilesUpserted) foodPiles.set(p.id, p);
     for (const id of diff.foodPilesRemoved) foodPiles.delete(id);
 
+    // Merge new entries after the old ones (the server's insertion order), then
+    // re-apply the same oldest-first cap the server uses, so both ends agree
+    // without the server ever sending a removal.
+    let heirs = diff.heirs ? { ...prev.heirs, ...diff.heirs } : prev.heirs;
+    const heirKeys = Object.keys(heirs);
+    if (heirKeys.length > HEIRS_CAP) {
+        heirs = { ...heirs };
+        for (let i = 0; i < heirKeys.length - HEIRS_CAP; i++) delete heirs[heirKeys[i]];
+    }
+
     return {
         seq: diff.seq,
         simTime: diff.simTime,
@@ -60,6 +71,7 @@ export function applyDiff(prev: SnapshotDTO, diff: Diff): SnapshotDTO {
         foodStore: diff.foodStore ?? prev.foodStore,
         env: diff.env ?? prev.env,
         graveyard: diff.graveyard ?? prev.graveyard,
+        heirs,
         // Carried forward by reference until a frame replaces them, which is what lets
         // remote-state.ts cache the decoded nest / pheromone layers by identity.
         pheromones: diff.pheromones ?? prev.pheromones,

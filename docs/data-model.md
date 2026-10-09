@@ -1,7 +1,9 @@
 # Data model — what lives where
 
-Three stores, one rule: **DO storage = the live simulation, D1 = its history,
-KV = cheap stale reads.**
+Two places, one rule: **the Durable Object's storage is the live simulation;
+the browser's `localStorage` is everything a visitor keeps for themselves.**
+There is no database and no cache: when an ant dies, everything known about it
+goes with it.
 
 ## Durable Object storage (SQLite inside `ColonyDO`)
 
@@ -13,7 +15,8 @@ Holds the single authoritative `ColonyState`, serialized by
 | `snapshot` | structured-clone object — the whole colony minus derived data (nest distance fields and the tile lookup are rebuilt on load) |
 | `seq` | monotonic tick counter at last save |
 | `lastTickMs` | wall-clock of the last processed tick (drives replay on wake) |
-| `schemaVersion` | bump → `serialize.decode` migrates or rejects |
+| `schemaVersion` | bump → `serialize.decode` rejects an old save and the worker starts a fresh colony |
+| `tally` | lifetime counters (births, deaths by cause, ...) so the dashboard survives a restart |
 
 Written every `SAVE_EVERY_TICKS` (300) ticks while someone is watching, and on
 every idle alarm (see `docs/cloudflare-setup.md` §7). Read once, in the DO
@@ -21,38 +24,10 @@ constructor, which replays the wall-clock time that passed since `lastTickMs`
 (capped at `MAX_RUN_TICKS` ticks; anything older is dropped). Single-writer, so no locking. Losing it rewinds the colony to the
 last save — it never corrupts.
 
-## D1 (`db/schema.sql`)
-
-History and anything queried across visitors. Written **batched** by
-`src/worker/lineage-sink.ts` via `ctx.waitUntil` so the tick never blocks.
-
-| table | columns | populated by | read by |
-| --- | --- | --- | --- |
-| `colony_snapshot` | `id=1, seq, sim_time, blob, updated_at` | optional periodic mirror | cold-start / debug |
-| `ant` | `id, name, lineage_id, caste, job, born_at, died_at, death_cause, traits_json` | `Birth` (insert), `Death` (update) | `/api/ants`, `/api/ants/:id` |
-| `lineage` | `id, surname, founded_at, founder_ant_id, extinct_at` | `Birth` of a founder, `LineageExtinct` | family tree, memorial |
-| `lineage_edge` | `parent_ant_id, child_ant_id` (PK both) | `Birth` | `/api/lineage/:id` tree build |
-| `pin` | `visitor_id, ant_id, created_at` (PK visitor+ant) | `/api/pins` POST/DELETE | `/api/pins`, leaderboard |
-| `event_log` | `id, kind, sim_time, payload_json` | weather/predator/nuptial/queen events | activity feed, memorial |
-| `visitor_action` | `id, visitor_id, kind, amount, sim_time, created_at` | `/api/actions/*` | audit, rate-limit backstop |
-
-Indexes: `ant(died_at)` (living list), `ant(lineage_id)`,
-`lineage_edge(child_ant_id)`, `pin(ant_id)` (most-pinned), `event_log(kind, sim_time)`.
-
-Housekeeping (`src/worker/cron.ts`, nightly): prune old `event_log` and
-long-dead `ant` rows to stay under the ~100k writes/day cap over time.
-
-## KV (`CACHE`, optional)
-
-Pure read-through cache. Every entry tolerates ~60s staleness. Refreshed by
-`cron.ts` once a minute, never written on the request path.
-
-| key | value | source |
-| --- | --- | --- |
-| `ants:living:page:<n>` | serialized `AntSummary[]` | D1 `ant WHERE died_at IS NULL` |
-| `leaderboard:pinned` | top-N ants by pin count | D1 `pin` group-by |
-| `snapshot:public` | latest lossy snapshot | DO (or `colony_snapshot`) |
-| `stats:hud` | `Stats` DTO | DO demography |
+Ant names live inside `ColonyState` (nothing separate): each ant carries its
+`name`; `surnameQueue` holds the surnames of dead ants waiting for the next
+hatch, and `heirs` (`deadId -> heirId`, capped at `HEIRS_CAP`) lets a client
+follow a dead ant to its successor. Both are bounded.
 
 ## Client (browser)
 
@@ -60,6 +35,6 @@ Pure read-through cache. Every entry tolerates ~60s staleness. Refreshed by
 
 | key | value |
 | --- | --- |
-| `antfarm.vid` | anonymous UUID (scopes pins + daily allowance) |
-| `antfarm.pins` | cached pin set (authoritative copy is D1) |
+| `antfarm.vid` | anonymous UUID (scopes the daily food allowance) |
+| `antfarm.pins` | this visitor's pinned ant ids (client-only; a pin moves to the ant's heir when it dies) |
 | `antfarm.prefs` | UI prefs (pheromone layer on/off, camera) |

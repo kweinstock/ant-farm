@@ -43,7 +43,18 @@ describe("serialize", () => {
     it("encoded colony has the expected top-level fields", () => {
         const keys = Object.keys(encodeState(createInitialState(1))).sort();
         expect(keys).toEqual(
-            ["ants", "brood", "climateOverride", "corpses", "env", "foodStore", "grid", "nest", "nextAntId",
-             "nextBroodId", "nextCorpseId", "queenId", "rngSeed", "seq", "simTime", "surface"].sort());
+            ["ants", "brood", "climateOverride", "corpses", "env", "foodStore", "grid", "heirs", "nest", "nextAntId",
+             "nextBroodId", "nextCorpseId", "queenId", "rngSeed", "seq", "simTime", "surface", "surnameQueue"].sort());
+    });
+
+    it("keeps the surname queue and heirs through a save and load", () => {
+        const state = {
+            ...createInitialState(1),
+            surnameQueue: [{ deadId: "ant-5", surname: "Barrow" }],
+            heirs: { "ant-3": "ant-9" },
+        };
+        const back = decodeState(structuredClone(encodeState(state)), SCHEMA_VERSION);
+        expect(back.surnameQueue).toEqual(state.surnameQueue);
+        expect(back.heirs).toEqual(state.heirs);
     });
 });
