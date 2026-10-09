@@ -5,18 +5,32 @@
  * testing.kweinstock.dev records owned by the landing-page Worker, so there is
  * no new DNS record or certificate to create. The most specific route wins, so
  * "/ant-farm/*" comes here and everything else falls through to the landing page.
+ * 
+ * "main" now points at the Worker entry (src/worker/index.ts) instead
+ * of this being an assets-only project. COLONY is the single ColonyDO Durable
+ * Object, created once and referenced by name ("global-colony") from
+ * src/worker/index.ts. SQLite-backed (new_sqlite_classes below) so Phase 14's
+ * persistence can use the DO's own storage without a second migration.
  */
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "ant-farm",
+  "main": "src/worker/index.ts",
   "compatibility_date": "2026-08-31",
   "assets": {
     "directory": "./dist",
-    // SPA fallback within the prefix. Drop to "404-page" (and add a 404.html)
-    // for a multi-page static site instead.
+    "binding": "assets",
     "not_found_handling": "single-page-application"
   },
   "observability": { "enabled": true },
+  "durable_objects": {
+    "bindings": [
+      {"name": "COLONY", "class_name": "ColonyDO"}
+    ]
+  },
+  "migrations": [
+    {"tag": "v1", "new_sqlite_classes": ["ColonyDO"]}
+  ],
   "routes": [
     { "pattern": "kweinstock.dev/ant-farm/*", "zone_name": "kweinstock.dev" }
   ],
@@ -25,6 +39,14 @@
       "name": "ant-farm-testing",
       "routes": [
         { "pattern": "testing.kweinstock.dev/ant-farm/*", "zone_name": "kweinstock.dev" }
+      ],
+      "durable_objects": {
+        "bindings": [
+          {"name": "COLONY", "class_name": "ColonyDO"}
+        ]
+      },
+      "migrations": [
+        {"tag": "v1", "new_sqlite_classes": ["ColonyDO"]}
       ]
     }
   }

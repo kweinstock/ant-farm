@@ -1,0 +1,284 @@
+// The forager-specific decide logic and act handlers. behavior.ts's rule 4
+// just delegates here for any FORAGER — this file owns the whole round
+// trip so behavior.ts's own rule list doesn't have to grow five nest/
+// surface-specific branches.
+//
+// decideForager reads `ant.carryingFood` straight off the Ant rather than
+// through Perception, same as decide() already does with ant.job — no
+// reason to duplicate a field Perception doesn't otherwise need.
+//
+// PHASE 3c: crossExit moved out to jobs.ts — it's now shared with the
+// undertaker round trip (see jobs.ts's header comment), so this file no
+// longer needs `exitMouth`. surfaceStep picked up a corpse-sync step this
+// phase instead: it's the one action an undertaker uses while hauling a
+// corpse across the surface (nest-side hauling goes through jobs.ts's
+// goto/crossExit). That sync logic is duplicated here rather than imported
+// from jobs.ts's copy of it — jobs.ts already imports this file at runtime
+// (pickUpFood etc.), so importing anything back at runtime would be a real
+// cycle. Two duplicated lines is cheaper than restructuring around that.
+//
+// PHASE 4: decideForager's surface-outbound branch gained two fallbacks
+// (trail, then memory) between "no visible pile" and giving up to wander —
+// decision 6's priority order. pickUpFood now also writes to ant.memory on
+// a successful pickup, and surfaceStep now also deposits a trail crumb
+// while hauling food home. Both new writes ride the same ActResult fields
+// (`ant`, `surface`) every handler here already returns — no new field on
+// ActResult was needed for this phase.
+import type { Ant, AntLocation } from "./ant";
+import type { Perception } from "./senses";
+import type { Action } from "./behavior";
+import { isSleepy } from "./behavior";
+import { wander, stepToward, surfaceRouteStep } from "./movement";
+import { takeFromPile, type Surface } from "../world/surface";
+import { depositToStore } from "../world/resources";
+import { deposit } from "../pheromones";
+import { rememberFoodSite, rememberEmptyPatch, updatePatchQuality, reinforce } from "./memory";
+import { HUNGER_THRESHOLD, DEPOSIT_AMOUNT, FORAGER_LOAD, EAT_AMOUNT, MAX_ENERGY, FORAGING_TRIP_FAILURE_TICKS } from "../params";
+import type { ColonyState } from "../state";
+import type { Position } from "../world/grid";
+import type { ActResult } from "./jobs";
+
+function patchIndexAt(surface: Surface, pos: Position): number | undefined {
+    for (let i = 0; i < surface.patches.length; i++) {
+        const p = surface.patches[i];
+        if (pos.x >= p.x0 && pos.x <= p.x1 && pos.y >= p.y0 && pos.y <= p.y1) {
+            return i;
+        }
+    }
+    return undefined;
+}
+
+export function decideForager(ant: Ant, perception: Perception): Action {
+    if (perception.where === "nest") {
+        if (ant.carryingFood > 0) {
+            if (perception.queenHungry) {
+                if (perception.currentChamber !== "QUEEN") {
+                    return { type: "goto", role: "QUEEN"};
+                }
+
+                const q = perception.queenPos;
+                return ant.location.pos.x === q.x && ant.location.pos.y === q.y
+                    ? { type: "feedQueen" }
+                    : { type: "moveToNestPoint", target: q };
+            }
+
+            return perception.currentChamber === "FOOD_STORAGE" ? { type: "depositFood" } : { type: "goto", role: "FOOD_STORAGE" };
+        }
+
+        // Just fled a predator into the nest — don't turn straight back
+        // around. Bug found in review: a forager that escapes underground
+        // used to head right back out next tick with nothing to stop it, so
+        // a predator camped near the hole could just sit there eating
+        // whoever popped up next. Sit it out in the nest until the cooldown
+        // clears instead.
+        if (perception.isSpooked) {
+            return perception.currentChamber === "COMMONS" ? { type: "mill" } : { type: "goto", role: "COMMONS" };
+        }
+
+        return perception.atExitMouth ? { type: "crossExit" } : { type: "goto", role: "EXIT" };
+    }
+
+    const hungry = perception.hungerRatio < HUNGER_THRESHOLD;
+
+    // Hungry and carrying nothing: feed at the surface, not at the nest
+    // store. A big surface means a long walk home, and if the store has
+    // bottomed out in a food crunch that walk kills the forager before it
+    // can refuel — the colony then can't claw back out of a crash. Eating
+    // at the pile (or heading to a visible one) keeps foragers alive in the
+    // field so deliveries resume once the boom's die-off passes.
+    if (hungry && ant.carryingFood === 0) {
+        if (perception.onFoodPileId !== undefined) {
+            return { type: "eatFromPile" };
+        }
+        if (perception.nearestFoodPilePos !== undefined) {
+            return { type: "surfaceStep", target: perception.nearestFoodPilePos };
+        }
+    }
+
+    const goHome = ant.carryingFood > 0 || hungry || isSleepy(ant);
+    if (goHome) {
+        // Routed, not greedy. A laden forager leaves a patch (obstacles
+        // clustered right there) and crosses the map to the hole — greedy
+        // stepToward stalls against those clusters, and the trail crumbs it
+        // drops on the way (applySurfaceMove) come out as a clean line home
+        // only if the path is a clean line. holePos is fixed, so the field is
+        // BFS'd once and reused for every forager forever.
+        return perception.atHole ? { type: "crossExit" } : { type: "surfaceRoute", target: perception.holePos };
+    }
+
+    if (perception.onFoodPileId !== undefined) {
+        return { type: "pickUpFood", source: "visible" };
+    }
+
+    if (perception.nearestFoodPilePos !== undefined) {
+        return { type: "surfaceStep", target: perception.nearestFoodPilePos };
+    }
+
+    const options: { source: "trail" | "memory" | "patch"; target: Position; trust: number }[] = [];
+    if (perception.trailNeighbor !== undefined) {
+        options.push({ source: "trail", target: perception.trailNeighbor, trust: ant.memory.learning.trailTrust });
+    }
+
+    if (perception.rememberedFoodPos !== undefined) {
+        options.push({ source: "memory", target: perception.rememberedFoodPos, trust: ant.memory.learning.memoryTrust });
+    }
+
+    if (perception.nearestPatchTarget !== undefined) {
+        options.push({ source: "patch", target: perception.nearestPatchTarget, trust: ant.memory.learning.patchTrust });
+    }
+
+    if (options.length > 0) {
+        const best = options.reduce((a, b) => (b.trust > a.trust ? b : a));
+
+        if (best.source === "patch" && perception.barrenPatchIndex !== undefined) {
+            return {
+                type: "noteBarrenPatch",
+                target: best.target,
+                patchIndex: perception.barrenPatchIndex,
+            };
+        }
+
+        return best.source === "patch"
+            ? { type: "surfaceRoute", target: best.target, source: "patch" }
+            : { type: "surfaceStep", target: best.target, source: best.source };
+    }
+
+    return { type: "surfaceWander" };
+}
+
+// `_source` (from decideForager's `{ type: "pickUpFood", source: "visible" }`
+// — the only call site, always "visible") is NOT what feeds reinforcement.
+// Bug found in review: this used to write `tripSource: source` here, which
+// unconditionally clobbered the real attribution — "trail"/"memory"/"patch",
+// set on the ant back when surfaceStep/surfaceRoute routed it toward this
+// pile — with the literal string "visible" every single time food was
+// picked up, right before depositFood reads tripSource to decide what to
+// reinforce. Trust weights could never actually update. Leaving tripSource
+// out of this return lets it fall through the `...ant` spread untouched, so
+// whatever the approach tagged survives to depositFood.
+export function pickUpFood(state: ColonyState, ant: Ant, _source: "trail" | "memory" | "patch" | "visible"): ActResult {
+    const pos = ant.location.pos;
+    const pile = state.surface.foodPiles.find((p) => p.pos.x === pos.x && p.pos.y === pos.y);
+
+    if (!pile) {
+        return { ant, brood: state.brood, foodStore: state.foodStore, surface: state.surface, corpses: state.corpses, rngSeed: state.rngSeed };
+    }
+
+    const { surface, taken } = takeFromPile(state.surface, pile.id, FORAGER_LOAD);
+
+    let memory = rememberFoodSite(ant.memory, pile.pos, state.simTime);
+    const patchIndex = patchIndexAt(state.surface, pile.pos);
+    if (patchIndex !== undefined) {
+        memory = updatePatchQuality(memory, patchIndex, taken);
+    }
+
+    return {
+        ant: { ...ant, carryingFood: taken, memory },
+        brood: state.brood,
+        foodStore: state.foodStore,
+        surface,
+        corpses: state.corpses,
+        rngSeed: state.rngSeed,
+    }
+}
+  
+
+export function depositFood(state: ColonyState, ant: Ant): ActResult {
+    const foodStore = depositToStore(state.foodStore, ant.carryingFood);
+
+    let memory = ant.memory;
+    if (ant.tripSource !== undefined) {
+        const tripLength = state.simTime - (ant.tripStartTick ?? state.simTime);
+        const outcome = tripLength > FORAGING_TRIP_FAILURE_TICKS ? "failure" : "success";
+        memory = { ...memory, learning: reinforce(memory.learning, ant.tripSource, outcome) };
+    }
+
+    return {
+        ant: { ...ant, carryingFood: 0, memory, tripSource: undefined, tripStartTick: undefined },
+        brood: state.brood,
+        foodStore,
+        surface: state.surface,
+        corpses: state.corpses,
+        rngSeed: state.rngSeed,
+    };
+}
+
+export function eatFromPile(state: ColonyState, ant: Ant): ActResult {
+    const pos = ant.location.pos;
+    const pile = state.surface.foodPiles.find((p) => p.pos.x === pos.x && p.pos.y === pos.y);
+
+    if (!pile) {
+        return { ant, brood: state.brood, foodStore: state.foodStore, surface: state.surface, corpses: state.corpses, rngSeed: state.rngSeed };
+    }
+
+    const { surface, taken } = takeFromPile(state.surface, pile.id, EAT_AMOUNT);
+    let memory = rememberFoodSite(ant.memory, pile.pos, state.simTime);
+    const patchIndex = patchIndexAt(state.surface, pile.pos);
+    if (patchIndex !== undefined) {
+        memory = updatePatchQuality(memory, patchIndex, taken);
+    }
+
+    return {
+        ant: { ...ant, energy: Math.min(ant.energy + taken, MAX_ENERGY), memory },
+        brood: state.brood,
+        foodStore: state.foodStore,
+        surface,
+        corpses: state.corpses,
+        rngSeed: state.rngSeed,
+    };
+}
+
+export function applySurfaceMove(state: ColonyState, ant: Ant, result: { position: Position; seed: number }): ActResult {
+    const location: AntLocation = { where: "surface", pos: result.position };
+
+    const corpses = state.corpses.some((corpse) => corpse.carriedBy === ant.id)
+        ? state.corpses.map((corpse) => (corpse.carriedBy === ant.id ? { ...corpse, location } : corpse))
+        : state.corpses;
+
+    const surface = ant.carryingFood > 0 && ant.location.where === "surface"
+        ? { ...state.surface, trail: deposit(state.surface.trail, ant.location.pos.x, ant.location.pos.y, DEPOSIT_AMOUNT) }
+        : state.surface;
+
+    return {
+        ant: { ...ant, location },
+        brood: state.brood,
+        foodStore: state.foodStore,
+        surface,
+        corpses,
+        rngSeed: result.seed,
+    };
+}
+
+export function surfaceStep(state: ColonyState, ant: Ant, target: Position, source?: "trail" | "memory" | "patch"): ActResult {
+    const result = stepToward(state.surface.grid, ant.location.pos, target, state.rngSeed);
+    const tagged = source !== undefined
+        ? { ...ant, tripSource: source, tripStartTick: ant.tripStartTick ?? state.simTime }
+        : ant;
+    return applySurfaceMove(state, tagged, result);
+}
+
+export function surfaceRoute(state: ColonyState, ant: Ant, target: Position, source?: "trail" | "memory" | "patch"): ActResult {
+    const result = surfaceRouteStep(state.surface.grid, ant.location.pos, target, state.rngSeed);
+    const tagged = source !== undefined
+        ? { ...ant, tripSource: source, tripStartTick: ant.tripStartTick ?? state.simTime }
+        : ant;
+    return applySurfaceMove(state, tagged, result);
+}
+
+export function noteBarrenPatch(state: ColonyState, ant: Ant, target: Position, patchIndex: number): ActResult {
+    const remembered: Ant = { ...ant, memory: rememberEmptyPatch(ant.memory, patchIndex, state.simTime) };
+    return surfaceRoute(state, remembered, target, "patch");
+}
+
+export function surfaceWander(state: ColonyState, ant: Ant): ActResult {
+    const result = wander(state.surface.grid, ant.location.pos, state.rngSeed);
+
+    return {
+        ant: { ...ant, location: { where: "surface", pos: result.position }, tripSource: undefined },
+        brood: state.brood,
+        foodStore: state.foodStore,
+        surface: state.surface,
+        corpses: state.corpses,
+        rngSeed: result.seed,
+    };
+}

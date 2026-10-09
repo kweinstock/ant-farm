@@ -4,6 +4,25 @@ Path-based project on `kweinstock.dev`. Vite + TypeScript, deployed to Cloudflar
 Workers static assets. Served at `kweinstock.dev/ant-farm/` (and
 `testing.kweinstock.dev/ant-farm/` from the `testing` branch).
 
+## Design
+
+A persistent global ant-colony simulation: one authoritative colony ticking
+server-side in a Cloudflare Durable Object, thin browser clients that watch a
+live stream and can drop food/water and pin favorite ants. Everything under
+`src/` and `test/` is currently a **comment-only stub** — the design lives in
+`docs/`:
+
+- [`docs/roadmap.md`](docs/roadmap.md) — **start here.** Phased build order; each
+  phase runs and is testable. Cloudflare doesn't enter until phase 6.
+- [`docs/architecture.md`](docs/architecture.md) — folder tree, data flow, the
+  Cloudflare free-tier mapping, and the language choice (all TypeScript).
+- [`docs/cloudflare-setup.md`](docs/cloudflare-setup.md) — bindings, deploy, the
+  request-budget math.
+- [`docs/simulation-model.md`](docs/simulation-model.md) — tick order, ant rule
+  engine, determinism contract.
+- [`docs/data-model.md`](docs/data-model.md) — DO storage vs D1 vs KV.
+- [`docs/ant-biology.md`](docs/ant-biology.md) — the real-ant facts being modeled.
+
 ## Scripts
 
 ```bash
