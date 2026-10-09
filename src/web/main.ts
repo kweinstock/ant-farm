@@ -50,6 +50,7 @@ import { mountControlPanel } from "./ui/control-panel";
 import { mountAntCard } from "./ui/ant-card";
 import { mountNavBar } from "./ui/nav-bar";
 import { mountPinnedTray } from "./ui/pinned-tray";
+import { mountLoadingScreen } from "./ui/loading-screen";
 import { createPinStore } from "./state/pins";
 import { ColonyStreamClient, colonyStreamUrl } from "./net/socket";
 import { PROTOCOL_VERSION } from "../shared/constants";
@@ -292,11 +293,21 @@ if (SOURCE === "local") {
     // network data.
     const baseState = createInitialState(seed);
 
+    // Until the first Snapshot arrives the scene is only that placeholder colony
+    // (frozen ants), so cover it; it also comes back if the connection drops.
+    const loading = mountLoadingScreen(viewsContainer);
+    // True once the live stream is flowing for the current connection.
+    let live = false;
+
     const client = new ColonyStreamClient(colonyStreamUrl(), {
         onHello: (hello) => {
             console.log(`[ant-farm] connected: protocol v${hello.protocolVersion}, colony "${hello.colonyId}"`);
+            loading.show("loading");
         },
         onUpdate: (snapshot, events, tally) => {
+            // Got the colony's state, but the ants only move once live frames
+            // follow (onLive below): keep the screen up until then.
+            if (!live) loading.show("syncing");
             const stateBeforeThisUpdate = state;
             state = colonyStateFromSnapshot(baseState, snapshot);
             // Snapshot (connect / resync): start the cumulative counters from the
@@ -310,11 +321,18 @@ if (SOURCE === "local") {
             pins.update(state);
             updatePanel(state, stats);
         },
+        onLive: () => {
+            live = true;
+            loading.hide();
+        },
         onProtocolMismatch: (serverVersion) => {
             console.error(`[ant-farm] protocol mismatch: client v${PROTOCOL_VERSION}, server v${serverVersion}. Reload to pick up the new client.`);
+            loading.showUpdateRequired();
         },
         onClose: () => {
             console.warn("[ant-farm] stream closed — reconnecting");
+            live = false;
+            loading.show("reconnecting");
         },
     });
     client.connect();

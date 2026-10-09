@@ -29,6 +29,10 @@ export interface ColonyStreamCallbacks {
     // `tally`: set only when this update came from a Snapshot (connect / resync) —
     // the colony's lifetime totals at that moment, to start the counters from.
     onUpdate?: (snapshot: SnapshotDTO, events: SimEvent[], tally?: Tally) => void;
+    // Fires once per connection, when the first live frame (a Batch's first Diff)
+    // has been applied. A Snapshot alone is a still picture: until frames follow,
+    // the ants would sit frozen, so this is the point where the colony is "running".
+    onLive?: () => void;
     onProtocolMismatch?: (serverVersion: number) => void;
     onClose?: (event: CloseEvent) => void;
 }
@@ -93,6 +97,7 @@ export class ColonyStreamClient {
     private wantOpen = false; // false after close()
     private retryMs = RETRY_MS;
     private retryTimer: ReturnType<typeof setTimeout> | null = null;
+    private live = false; // true once a frame has been applied on top of this connection's snapshot
 
     constructor(private readonly url: string, private readonly callbacks: ColonyStreamCallbacks = {}) {}
 
@@ -171,6 +176,7 @@ export class ColonyStreamClient {
 
         if (message.kind === "snapshot") {
             this.current = message.data;
+            this.live = false;
             this.queue = [];
             this.pendingEvents = [];
             this.callbacks.onUpdate?.(this.current, [], message.tally);
@@ -208,6 +214,10 @@ export class ColonyStreamClient {
             const events = this.pendingEvents;
             this.pendingEvents = [];
             this.callbacks.onUpdate?.(this.current, events);
+            if (!this.live) {
+                this.live = true;
+                this.callbacks.onLive?.();
+            }
         }
     }
 }
