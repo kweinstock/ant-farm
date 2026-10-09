@@ -13,6 +13,7 @@
     "lint:fix": "eslint . --fix",
     "deploy": "npm run build && wrangler deploy",
     "deploy:testing": "npm run build && wrangler deploy --env testing",
+    "teardown:testing": "npx tsx scripts/teardown-testing.ts",
     "test": "vitest run",
     "test:worker": "npm run test -w test/worker",
     "test:basic": "npx tsx scripts/print-sim.ts",

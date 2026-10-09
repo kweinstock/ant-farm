@@ -69,6 +69,25 @@ branch:
 `npm run build` compiles `src/web` to `dist/`; `wrangler deploy` bundles
 `src/worker` + uploads `dist/` as assets + creates/updates the DO.
 
+### Taking the testing environment down
+
+Once production is live you don't want `ant-farm-testing` ticking a second colony
+and spending requests. `scripts/teardown-testing.ts` removes it:
+
+```bash
+npm run teardown:testing -- --dry-run   # show the plan, change nothing
+npm run teardown:testing                # asks you to type the Worker's name
+```
+
+It first replaces the Worker with a stand-in that has no Durable Object and a
+migration that deletes the `ColonyDO` class (this drops the saved colony and its
+alarms — the simulation stops), then deletes the Worker, then checks the URL. It
+refuses any name that isn't `...-testing`, so it can't touch `ant-farm`. It cannot
+be undone. Afterwards: confirm in the dashboard that the Worker and its
+`testing.kweinstock.dev/ant-farm/*` route are gone, disconnect the `testing` branch
+in Workers Builds if it is connected, and remove `env.testing` from
+`wrangler.jsonc` plus the `deploy:testing` script.
+
 ## 5. Free-tier budget — the one calculation that matters
 
 Workers free plan is ~**100,000 requests/day**. Every `alarm()` invocation
