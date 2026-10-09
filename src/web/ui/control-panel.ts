@@ -157,11 +157,6 @@ function injectStyles(): void {
             font-size: 1.05rem;
             line-height: 1.2;
         }
-        .ant-farm-panel-subtitle {
-            font-size: 0.7rem;
-            color: #c8b898;
-            margin-top: 0.15rem;
-        }
         .ant-farm-panel-icon-btn {
             flex: none;
             width: 1.4rem;
@@ -294,7 +289,6 @@ function injectStyles(): void {
             .ant-farm-panel[data-screen="colony"] .ant-farm-panel-icon-btn,
             .ant-farm-panel[data-screen="view"] .ant-farm-panel-icon-btn { display: none; }
             .ant-farm-panel[data-screen="view"] .ant-farm-panel-title-row { display: flex; }
-            .ant-farm-panel[data-screen="view"] .ant-farm-panel-subtitle { display: none; }
             .ant-farm-panel-dashboard { margin-top: 0.5rem; }
             .ant-farm-panel-dashboard-body { columns: 1; }
             .ant-farm-panel-btn { font-size: 0.85rem; padding: 0.55rem 0.8rem; }
@@ -351,10 +345,7 @@ export function mountControlPanel(container: HTMLElement): ControlPanel {
     const title = document.createElement("div");
     title.className = "ant-farm-panel-title";
     title.textContent = "Global Ant Farm";
-    const subtitle = document.createElement("div");
-    subtitle.className = "ant-farm-panel-subtitle";
-    subtitle.textContent = "Currently in the testing phase";
-    titleBlock.append(title, subtitle);
+    titleBlock.append(title);
 
     const infoButton = document.createElement("button");
     infoButton.type = "button";
@@ -443,10 +434,7 @@ export function mountControlPanel(container: HTMLElement): ControlPanel {
     const hudName = document.createElement("div");
     hudName.className = "ant-farm-panel-title";
     hudName.textContent = "Global Ant Farm";
-    const hudSub = document.createElement("div");
-    hudSub.className = "ant-farm-panel-subtitle";
-    hudSub.textContent = "Currently in the testing phase";
-    hudTitle.append(hudName, hudSub);
+    hudTitle.append(hudName);
     const hudEnv = document.createElement("div");
     hudEnv.className = "ant-farm-hud-env";
     const hudTime = buildEnvRow();
