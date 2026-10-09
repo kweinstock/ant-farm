@@ -31,10 +31,9 @@ follow a dead ant to its successor. Both are bounded.
 
 ## Client (browser)
 
-`localStorage` only, no server persistence of visitor identity:
+`localStorage` only. There is no visitor identity and nothing about a visitor is stored server-side:
 
 | key | value |
 | --- | --- |
-| `antfarm.vid` | anonymous UUID (scopes the daily food allowance) |
 | `antfarm.pins` | this visitor's pinned ant ids (client-only; a pin moves to the ant's heir when it dies) |
 | `antfarm.prefs` | UI prefs (pheromone layer on/off, camera) |

@@ -20,11 +20,13 @@ import { surnameOf } from "../../sim/names/generator";
 import { DAY_LENGTH_TICKS, MAX_ENERGY, HUNGER_THRESHOLD } from "../../sim/params";
 import { MOBILE_MAX_WIDTH, NAV_HEIGHT_REM } from "./layout";
 import { setIcon } from "./icons";
+import { resolveAnt } from "../state/succession";
+import type { PinStore } from "../state/pins";
+
+// Still importable from here (tests, the card itself); the logic lives in state/succession.ts.
+export { resolveAnt };
 
 const HOUR_TICKS = DAY_LENGTH_TICKS / 24;
-// A heir chain is at most HEIRS_CAP long; this just stops a corrupt map from
-// looping forever.
-const MAX_FOLLOW = 200;
 
 const STYLE_ID = "ant-farm-ant-card-style";
 
@@ -140,6 +142,8 @@ function injectStyles(): void {
 
         .ant-farm-ant-card-actions { display: flex; align-items: center; gap: 0.4rem; flex: none; }
         .ant-farm-ant-card-toggle { display: none; }
+        .ant-farm-ant-card-pin[aria-pressed="true"] { color: #e0b34a; border-color: rgba(224, 179, 74, 0.7); background: rgba(224, 179, 74, 0.16); }
+        .ant-farm-ant-card-pin[aria-pressed="true"] svg { fill: rgba(224, 179, 74, 0.4); }
 
         /* Phone layout: the card is a bar along the top showing just the ant's
            name; the arrow opens the stats beneath it. The nav and the sheets live
@@ -187,25 +191,6 @@ function ordinal(n: number): string {
     return `${n}${["th", "st", "nd", "rd"][n % 10 > 3 ? 0 : n % 10]}`;
 }
 
-// The ant to show for `id`: itself if alive, else the first living heir down
-// the chain. The returned id is whichever that turned out to be, so the card can
-// keep tracking the heir from then on.
-export function resolveAnt(state: ColonyState, id: AntId): { id: AntId; ant: Ant | undefined } {
-    let current = id;
-    for (let i = 0; i < MAX_FOLLOW; i++) {
-        const ant = state.ants.get(current);
-        if (ant) {
-            return { id: current, ant };
-        }
-        const heir = state.heirs[current];
-        if (heir === undefined) {
-            return { id: current, ant: undefined };
-        }
-        current = heir;
-    }
-    return { id: current, ant: undefined };
-}
-
 // 1 = oldest. Ties share the lower number.
 function ageRank(state: ColonyState, ant: Ant): number {
     let older = 0;
@@ -245,7 +230,12 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, t
     return node;
 }
 
-export function mountAntCard(parent: HTMLElement, onFollow?: (id: AntId) => void, onClose?: () => void): AntCard {
+export function mountAntCard(
+    parent: HTMLElement,
+    onFollow?: (id: AntId) => void,
+    onClose?: () => void,
+    pins?: PinStore,
+): AntCard {
     injectStyles();
 
     const card = el("div", "ant-farm-ant-card");
@@ -267,8 +257,16 @@ export function mountAntCard(parent: HTMLElement, onFollow?: (id: AntId) => void
     toggleButton.type = "button";
     toggleButton.setAttribute("aria-label", "Show stats");
     toggleButton.setAttribute("aria-expanded", "false");
+    // Pin / unpin this ant (state/pins.ts). Pins follow the ant's heir when it dies.
+    const pinButton = el("button", "ant-farm-ant-card-close ant-farm-ant-card-pin");
+    setIcon(pinButton, "pin", 0.9);
+    pinButton.type = "button";
+    pinButton.title = "Pin this ant";
+    pinButton.setAttribute("aria-label", "Pin this ant");
+    pinButton.setAttribute("aria-pressed", "false");
+    pinButton.hidden = pins === undefined;
     const actions = el("div", "ant-farm-ant-card-actions");
-    actions.append(toggleButton, closeButton);
+    actions.append(pinButton, toggleButton, closeButton);
     head.append(titles, actions);
 
     // ---- state chips ----
@@ -338,6 +336,13 @@ export function mountAntCard(parent: HTMLElement, onFollow?: (id: AntId) => void
         card.hidden = next === undefined;
     }
 
+    pinButton.addEventListener("click", () => {
+        if (selected === undefined || !pins) {
+            return;
+        }
+        pinButton.setAttribute("aria-pressed", String(pins.toggle(selected)));
+    });
+
     toggleButton.addEventListener("click", () => {
         const expanded = card.classList.toggle("is-expanded");
         setIcon(toggleButton, expanded ? "up" : "down", 0.9);
@@ -369,6 +374,7 @@ export function mountAntCard(parent: HTMLElement, onFollow?: (id: AntId) => void
             nameEl.textContent = lastName;
             roleEl.textContent = "has died";
             setChips([]);
+            pinButton.hidden = true;
             body.hidden = true;
             note.textContent = "Waiting for an heir to take the name…";
             return;
@@ -380,6 +386,8 @@ export function mountAntCard(parent: HTMLElement, onFollow?: (id: AntId) => void
         }
         lastName = ant.name;
         card.classList.remove("is-dead");
+        pinButton.hidden = pins === undefined;
+        pinButton.setAttribute("aria-pressed", String(pins?.has(ant.id) ?? false));
         card.classList.toggle("is-queen", ant.caste === "QUEEN");
         body.hidden = false;
         note.textContent = "";

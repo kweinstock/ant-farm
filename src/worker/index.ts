@@ -11,9 +11,9 @@
 //       and forward the request to its own .fetch()
 //     - everything else: env.assets.fetch(request) — the built src/web bundle
 //
-// No REST router (/ant-farm/api/*) yet — the visitor-action endpoint is
-// Phase 16; router.ts stays an untouched stub until then. There is no D1, KV
-// or cron: the Durable Object's own storage and alarms are the whole backend.
+// There is no REST API: the only endpoint is the stream. Visitors cannot change
+// the colony (pins live in the browser), and there is no D1, KV or cron — the
+// Durable Object's own storage and alarms are the whole backend.
 export { ColonyDO } from "./colony-do";
 
 const COLONY_NAME = "global-colony";

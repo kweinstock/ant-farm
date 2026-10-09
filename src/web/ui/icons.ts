@@ -24,6 +24,11 @@ const ICONS = {
         { tag: "path", attrs: { d: "M12 11v6" } },
         { tag: "path", attrs: { d: "M12 7.5v.01" } },
     ],
+    // A map pin: "keep track of this ant".
+    pin: [
+        { tag: "path", attrs: { d: "M12 21s-6-5.2-6-10a6 6 0 1 1 12 0c0 4.8-6 10-6 10z" } },
+        { tag: "circle", attrs: { cx: "12", cy: "11", r: "2" } },
+    ],
     left: [{ tag: "path", attrs: { d: "M15 5l-7 7 7 7" } }],
     right: [{ tag: "path", attrs: { d: "M9 5l7 7-7 7" } }],
     down: [{ tag: "path", attrs: { d: "M5 9l7 7 7-7" } }],

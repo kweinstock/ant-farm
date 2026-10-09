@@ -49,6 +49,8 @@ import { mountViews } from "./ui/view-switch";
 import { mountControlPanel } from "./ui/control-panel";
 import { mountAntCard } from "./ui/ant-card";
 import { mountNavBar } from "./ui/nav-bar";
+import { mountPinnedTray } from "./ui/pinned-tray";
+import { createPinStore } from "./state/pins";
 import { ColonyStreamClient, colonyStreamUrl } from "./net/socket";
 import { PROTOCOL_VERSION } from "../shared/constants";
 import { colonyStateFromSnapshot } from "./net/remote-state";
@@ -63,13 +65,25 @@ if (!(viewsContainer instanceof HTMLElement)) {
 const { sceneContainer } = mountViews(viewsContainer);
 const { renderOptions, onResetView, setScreen, openInfo, update: updateControlPanel } = mountControlPanel(viewsContainer);
 // When the card moves on to a dead ant's heir, the camera goes with it.
-const antCard = mountAntCard(viewsContainer, (id) => scene.focusAnt(id), () => scene.exitFocus());
-// The menu: screens (Colony / View / About) with ant arrows on either side.
-mountNavBar(viewsContainer, { onScreen: setScreen, onAbout: openInfo, onCycle: (direction) => cycleAnt(direction) });
+// Pinned ants (client-only, in localStorage); a pin follows its ant's heir.
+const pins = createPinStore();
+const antCard = mountAntCard(viewsContainer, (id) => scene.focusAnt(id), () => scene.exitFocus(), pins);
+const pinnedTray = mountPinnedTray(viewsContainer, pins, (id) => showAnt(id));
+// The menu: screens (Colony / View / Pinned / About) with ant arrows on either side.
+mountNavBar(viewsContainer, {
+    onScreen: (screen) => {
+        setScreen(screen === "pins" ? null : screen);
+        pinnedTray.setOpen(screen === "pins");
+        pinnedTray.render(state);
+    },
+    onAbout: openInfo,
+    onCycle: (direction) => cycleAnt(direction),
+});
 // One call for everything that redraws on a sim update.
 function updatePanel(state: ColonyState, stats: TuningStats): void {
     updateControlPanel(state, stats);
     antCard.update(state);
+    pinnedTray.render(state);
 }
 
 // Fixed, same as scripts/print-sim.ts — deterministic while tuning behavior.
@@ -241,10 +255,19 @@ function cycleAnt(direction: 1 | -1): void {
         index === -1
             ? (direction === 1 ? 0 : ids.length - 1)
             : (index + direction + ids.length) % ids.length;
-    antCard.select(ids[next]);
-    antCard.update(state);
-    scene.focusAnt(ids[next]);
+    showAnt(ids[next]);
 }
+// Select an ant, open its card and fly the camera to it.
+function showAnt(id: AntId): void {
+    antCard.select(id);
+    antCard.update(state);
+    scene.focusAnt(id);
+}
+scene.setPinnedAnts(pins.ids());
+pins.subscribe(() => {
+    scene.setPinnedAnts(pins.ids());
+    pinnedTray.render(state);
+});
 updatePanel(state, stats);
 
 if (SOURCE === "local") {
@@ -255,6 +278,7 @@ if (SOURCE === "local") {
         updateTuningStats(stats, state, result.events);
         prevState = stateBeforeThisInterval;
         tickStartTime = performance.now();
+        pins.update(state);
         updatePanel(state, stats);
     }, TICK_INTERVALS_MS);
 } else {
@@ -281,6 +305,9 @@ if (SOURCE === "local") {
             updateTuningStats(stats, state, events);
             prevState = stateBeforeThisUpdate;
             tickStartTime = performance.now();
+            // Only ever called with real colony data (never the placeholder state
+            // above), because the first look drops pins whose ant is gone.
+            pins.update(state);
             updatePanel(state, stats);
         },
         onProtocolMismatch: (serverVersion) => {

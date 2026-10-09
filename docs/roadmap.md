@@ -17,8 +17,8 @@ Phase 12 (Phases 3a–3c included) runs with `npm test` and `npm run dev` alone.
 > shifted up to **13–17**. Code comments that reference "Phase 6"–"Phase 10"
 > for the Durable Object, streaming, persistence, visitor actions, or D1 mean
 > what were Phases 13–16 at the time; they were not mass-edited. Phases 15–16
-> were later reshaped: **15** is named ants + the ant card and **16** is visitor
-> actions (food patch, pins). The old Phase 17 (cron, KV, D1) was dropped: the
+> were later reshaped: **15** is named ants + the ant card and **16** is pins
+> (client-only). The old Phase 17 (cron, KV, D1) was dropped: the
 > project is the Worker + one Durable Object and nothing else. There is no
 > lineage / family-tree feature any more.
 
@@ -603,13 +603,12 @@ saved shape changes, so old saves are discarded cleanly rather than half-loaded.
 **Deleted instead of built** (lineage is out, and with it D1, KV and cron; the
 Durable Object's own storage and alarms cover everything that remains):
 - `src/sim/genetics/` (all three files)
-- `src/web/ui/{family-tree,memorial,water-meter}.ts`, `src/web/net/api.ts`
-- `src/worker/{lineage-sink,cron}.ts`, `src/worker/api/{ants,lineage,pins,stats}.ts`
+- `src/web/ui/{family-tree,memorial,water-meter,toolbar,ant-list}.ts`, `src/web/net/{api,visitor-id}.ts`, `src/web/state/{store,selectors}.ts`
+- `src/worker/{lineage-sink,cron,router,inputs}.ts`, all of `src/worker/api/`, `src/sim/inputs.ts` (no visitor action reaches the sim)
 - `db/` (schema, migrations, seed)
 - the D1 / KV / cron sections of `docs/cloudflare-setup.md`, `docs/data-model.md`
   and `docs/architecture.md`. `wrangler.jsonc` has no `DB`, `CACHE` or
   `triggers.crons` entries, so nothing to unwire there.
-- Keep `src/worker/router.ts` and `src/worker/api/actions.ts` for Phase 16.
 
 **Test:**
 - names are deterministic for a seed; two runs give identical names.
@@ -624,29 +623,7 @@ follow its heir after it dies.
 
 ---
 
-## Phase 16 — visitor actions: food patches and pins
-
-Done after Phase 15 so there are named ants worth pinning.
-
-**Place food (server-authoritative)**
-- A visitor places a **2×2 food patch** on the surface. `src/sim/inputs.ts`
-  applies it (four adjacent surface tiles, each seeded with a new
-  `VISITOR_FOOD_TILE_AMOUNT` param); it rejects anything off-surface, out of
-  bounds, or on a rock / tree tile. This is the second guard.
-- `src/worker/inputs.ts` — validates `{ kind: "food", pos }`, enforces a
-  per-visitor daily allowance (anonymous id from `web/net/visitor-id.ts`) and a
-  global rate limit, and queues the patch for the **next tick** (never
-  mid-tick). Visitors cannot alter weather, season, temperature, or predators.
-- Transport: `POST /ant-farm/api/actions` via `src/worker/api/actions.ts` and
-  `router.ts`, forwarded to the DO; the DO answers with an `ActionAck`
-  `{accepted, reason?}`. This only costs a request when someone acts.
-- Client: a "place food" tool in `web/ui/toolbar.ts` (click the ground, see a
-  2×2 ghost, confirm) with the remaining allowance shown. The patch appears
-  through the normal diff stream, so there is no new render path.
-- **Tune the economy against it.** The food economy was optimized for seed
-  12345 with no outside food. Size the patch and allowance so visitors help but
-  can't flatten the starvation / winter pressure.
-- `water` is dropped from the plan unless you want it back.
+## Phase 16 — pins
 
 **Pins (client-only)**
 - A pin is an ant id kept in `localStorage` (`antfarm.pins`). No server table.
@@ -657,12 +634,10 @@ Done after Phase 15 so there are named ants worth pinning.
   map on reconnect. A pin whose chain was lost is dropped quietly.
 - Pins never reach the sim and never cost a request.
 
-**Test:** `test/worker/inputs.test.ts` — rejects bad kinds, off-surface and
-obstacle positions; enforces allowance and rate limit; the patch lands on the
-next tick; determinism holds with queued input. Unit tests for pin transfer
-(death → heir → pin id changes; a chain across several deaths; a lost chain).
-In the browser: drop a patch and watch foragers find it; pin an ant, let it
-die, watch the ring move.
+**Test:** unit tests for pin transfer (`test/sim/pins.test.ts`): death → heir →
+pin id changes; a chain across several deaths; a lost chain is dropped; a pin
+awaiting its heir is kept for a grace period; saved pins parse safely. In the
+browser: pin an ant, let it die, watch the ring move to its heir.
 
 ---
 

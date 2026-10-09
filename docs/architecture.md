@@ -12,15 +12,13 @@ forward even when nobody is watching ("persistent"). Visitors are thin clients
 that:
 
 - **watch** a live stream of colony state,
-- **nudge** it in one allowed way (place a 2x2 patch of food),
 - **inspect** an ant (click it: name, job, age, time left) and **pin** ants they
   want to come back to (client-only; a pin follows an ant's heir when it dies).
 
 Everything else — weather, day/night, seasons, temperature, predators, flooding,
 disease, death rolls — is **server-driven and visitors cannot touch it**. That
-boundary is enforced structurally: there is simply no API endpoint and no
-`VisitorInput` variant for those things (`src/sim/inputs.ts` accepts only
-`food`).
+boundary is enforced structurally: the only endpoint is the read-only stream,
+and nothing a visitor does in the browser reaches the sim.
 
 The three hard problems are (a) a single shared mutable simulation, (b) a loop
 that runs without an always-on server, (c) real-time fan-out to many viewers. On
@@ -32,7 +30,6 @@ an `alarm()`.
    Browser ──────┤ Cloudflare Worker static assets  (src/web)   │
    (viewer)      │  served at kweinstock.dev/ant-farm/          │
                  └─────────────────────────────────────────────┘
-       │  REST  /ant-farm/api/actions   (place food; Phase 16)
        │  WS    /ant-farm/api/stream   (Hello + Snapshot + Diffs)
        ▼
    ┌───────────────────────────────────────────────────────────┐
@@ -88,7 +85,6 @@ ant-farm/
 │   │   ├── protocol.ts         # WS message shapes + REST DTOs — the wire contract
 │   │   ├── constants.ts        # TICK_MS, GRID_W/H, lifespans, allowances, PROTOCOL_VERSION
 │   │   ├── enums.ts            # Caste, Job, TileType, WeatherKind, Season, TimeOfDay, EventKind…
-│   │   └── ids.ts              # AntId / LineageId / VisitorId formats + guards
 │   │
 │   ├── sim/                    # THE engine. No Cloudflare, no DOM, deterministic.
 │   │   ├── index.ts            # step(state, inputs, dtTicks) -> { state, events }  + re-exports
@@ -128,30 +124,25 @@ ant-farm/
 │   │   │   ├── temperature.ts  # base(season, timeOfDay) ± weather ± depth
 │   │   │   └── hazards.ts      # predator / flooding / cold snap / disease — visitor-proof
 │   │   ├── foraging.ts         # cross-view trip: exit -> surface search -> pickup -> return -> deliver to FOOD_STORE/queen
-│   │   ├── inputs.ts           # apply the ONLY allowed visitor action (food)
 │   │   └── events.ts           # Birth / Death / CorpseInterred / QueenDied / …
 │   │
 │   ├── worker/                 # the deployed backend (runs in the same Worker)
 │   │   ├── index.ts            # fetch handler; DO resolution; asset passthrough
-│   │   ├── router.ts           # tiny path router + JSON/CORS helpers + visitor-id header
 │   │   ├── colony-do.ts        # THE Durable Object: constructor / fetch / alarm / ws handlers
 │   │   ├── loop.ts             # ticksToRun(now, lastTick) capped by MAX_CATCHUP_TICKS
 │   │   ├── broadcast.ts        # snapshot-on-join, diffs after, throttle, drop slow clients
 │   │   ├── connections.ts      # socket registry on the Hibernation API
-│   │   ├── inputs.ts           # validate + rate-limit + clamp visitor actions, queue for next tick
-│   │   ├── persistence.ts      # DO storage: save/load snapshot + seq + lastTick
-│   │   └── api/
-│   │       └── actions.ts      # POST /actions/food -> DO
+│   │   └── persistence.ts      # DO storage: save/load snapshot + seq + lastTick
 │   │
 │   ├── web/                    # the browser client (built by Vite)
-│   │   ├── main.ts             # bootstrap: visitor id -> store -> socket -> render -> UI
+│   │   ├── main.ts             # bootstrap: socket (or local sim) -> render -> UI
 │   │   ├── config.ts           # API base, reconnect backoff, target FPS
 │   │   ├── net/
-│   │   │   ├── socket.ts       # WS to /stream: reconnect, resync, dispatch into store
-│   │   │   └── visitor-id.ts   # anonymous UUID in localStorage — no accounts
+│   │   │   ├── socket.ts       # WS to /stream: reconnect, resync, playback queue
+│   │   │   └── remote-state.ts # rebuild a ColonyState from the wire so the UI is the same in both modes
 │   │   ├── state/
-│   │   │   ├── store.ts        # client mirror of the snapshot + diff reducers
-│   │   │   ├── selectors.ts    # derive visible ants, pinned ants, HUD values
+│   │   │   ├── pins.ts         # this visitor's pinned ants (localStorage) + moving a pin to the heir
+│   │   │   ├── succession.ts   # follow a dead ant down state.heirs to its living heir
 │   │   │   └── interpolate.ts  # smooth ant motion between server ticks
 │   │   ├── render/
 │   │   │   ├── engine.ts       # rAF loop; drives BOTH canvases (nest + surface)
@@ -189,16 +180,15 @@ ant-farm/
 ### A visitor arrives
 
 1. Browser loads the static bundle (Worker static assets, `/ant-farm/`).
-2. `net/visitor-id.ts` reads or mints an anonymous UUID in `localStorage`.
-3. `net/socket.ts` opens `wss://…/ant-farm/api/stream`. `src/worker/index.ts`
+2. `net/socket.ts` opens `wss://…/ant-farm/api/stream`. `src/worker/index.ts`
    resolves the fixed Durable Object (`idFromName("global-colony")`) and forwards
    the upgrade to `ColonyDO.fetch()`.
-4. `ColonyDO` accepts the socket with the **Hibernation API**, sends `Hello` +
+3. `ColonyDO` accepts the socket with the **Hibernation API**, sends `Hello` +
    a full `Snapshot`, and registers the connection (`connections.ts`).
 
 ### The loop (persistence without an always-on server)
 
-5. `ColonyDO` keeps `ColonyState` in memory and has an `alarm()` set for
+4. `ColonyDO` keeps `ColonyState` in memory and has an `alarm()` set for
    `now + TICK_MS`.
 6. `alarm()` fires → `loop.ts` computes how many sim steps to run for the real
    elapsed time (capped by `MAX_CATCHUP_TICKS`) → calls `src/sim` `step()` for
@@ -213,28 +203,17 @@ ant-farm/
     **replays elapsed wall-clock time** on wake (that is why `step()` must be
     deterministic), so no tick is truly lost.
 
-### A visitor acts
-
-11. Toolbar POSTs `/ant-farm/api/actions/food` (Phase 16) with the
-    `X-Visitor-Id` header.
-12. Worker forwards to `ColonyDO.fetch()` → `worker/inputs.ts` validates,
-    rate-limits per visitor and globally, clamps the amount, and queues it.
-13. The next `alarm()` applies queued inputs **before** stepping (via
-    `sim/inputs.ts`), so the shared state stays consistent.
-14. The effect appears in the next `Diff` to everyone.
-
 ### Inspecting and pinning (no server round trip)
 
-15. Clicking an ant opens `ant-card.ts` from the state the client already has.
-    Pins are ant ids in `localStorage`; when a pinned ant dies the pin moves to
-    its heir (`state.heirs`). Nothing here costs a request.
+11. Clicking an ant opens `ant-card.ts` from the state the client already has.
+    Pins are ant ids in `localStorage` (`state/pins.ts`); when a pinned ant dies
+    the pin moves to its heir (`state.heirs`). Nothing here costs a request.
 
 ### Server-only changes
 
-16. `sim/environment/*` and `sim/environment/hazards.ts` run purely inside
+12. `sim/environment/*` and `sim/environment/hazards.ts` run purely inside
     `step()`. No API path lets a visitor set weather, season, temperature, or
-    spawn/remove predators — enforced by not exposing endpoints and by
-    `sim/inputs.ts` accepting only `food`.
+    spawn/remove predators — there is no write endpoint at all.
 
 ---
 

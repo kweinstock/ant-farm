@@ -18,6 +18,8 @@ import { mountAntInfo } from "./ant-info";
 import { MOBILE_MAX_WIDTH, NAV_HEIGHT_REM, DOCK_OFFSET_REM } from "./layout";
 import type { NavScreen } from "./nav-bar";
 
+type PanelScreen = Exclude<NavScreen, "pins">;
+
 const TRAILS_KEY = "ant-farm-show-trails";
 const PATCHES_KEY = "ant-farm-show-patches";
 const CHAMBER_COLORS_KEY = "ant-farm-show-chamber-colors";
@@ -57,7 +59,7 @@ export type ControlPanel = {
     // Phone layout: show the panel as a sheet for this screen ("colony" = time,
     // weather and the stats dashboard; "view" = camera/overlay toggles), or hide
     // it with null. Desktop never calls this.
-    setScreen: (screen: NavScreen | null) => void;
+    setScreen: (screen: PanelScreen | null) => void;
     openInfo: () => void;
     update: (state: ColonyState, stats: TuningStats) => void;
 };
@@ -472,7 +474,7 @@ export function mountControlPanel(container: HTMLElement): ControlPanel {
         onResetView: (handler: () => void) => {
             resetHandler = handler;
         },
-        setScreen: (screen: NavScreen | null) => {
+        setScreen: (screen: PanelScreen | null) => {
             if (screen === null) {
                 panel.removeAttribute("data-screen");
             } else {

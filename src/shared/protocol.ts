@@ -171,6 +171,5 @@ export function isServerMessage(value: unknown): value is ServerMessage {
 }
 
 // ---- Not yet defined ----
-// ActionAck   {actionId, accepted, reason?}   (Phase 16, visitor actions)
 // Error       {code, message}
 // Subscribe   {viewport?}   (client -> server)

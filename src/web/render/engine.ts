@@ -68,6 +68,7 @@ import { renderSurfaceView } from "./surface-view";
 import { mountWeatherOverlay } from "./weather-overlay";
 import { computeAmbientLight } from "./ambient-light";
 import { interpolateAnts, type RenderAnt } from "../state/interpolate";
+import { buildPinRingTexture } from "./pin-ring";
 import type { RenderOptions } from "../ui/control-panel";
 import { buildSurfaceProps } from "./props";
 import { buildAntProps } from "./ant-props";
@@ -111,6 +112,8 @@ export type FrameSource = {
 
 export type SceneHandle = {
     resetCamera: () => void;
+    // PHASE 16: draw a highlight ring around each of these ants (the visitor's pins).
+    setPinnedAnts: (antIds: readonly AntId[]) => void;
     // Frame and follow this ant, as if it had been clicked (without reporting it
     // back through onAntPicked). A no-op if the ant isn't being drawn.
     focusAnt: (antId: AntId) => void;
@@ -330,6 +333,11 @@ export function startRenderLoop(
 
     let focused = false;
     let focusTween: FocusTween | undefined;
+    // PHASE 16: one billboard ring per pinned ant that is currently drawn.
+    let pinnedIds: ReadonlySet<AntId> = new Set();
+    const pinRings = new Map<AntId, THREE.Sprite>();
+    const pinRingTexture = buildPinRingTexture();
+
     // The ant the camera is following, and which cube face it was last framed on.
     let followId: AntId | undefined;
     let followFace: "surface" | "nest" | undefined;
@@ -340,6 +348,33 @@ export function startRenderLoop(
                 ? surfaceTileToLocal(renderAnt.x, renderAnt.y, surfaceGrid, dims)
                 : nestTileToLocal(renderAnt.x, renderAnt.y, nestGrid, dims);
         return cube.localToWorld(new THREE.Vector3(local.x, local.y, local.z));
+    }
+
+    function syncPinRings(): void {
+        for (const [id, sprite] of pinRings) {
+            if (!pinnedIds.has(id) || !latestRenderAnts.has(id)) {
+                scene.remove(sprite);
+                sprite.material.dispose();
+                pinRings.delete(id);
+            }
+        }
+        for (const id of pinnedIds) {
+            const renderAnt = latestRenderAnts.get(id);
+            if (!renderAnt) {
+                continue;
+            }
+            let sprite = pinRings.get(id);
+            if (!sprite) {
+                sprite = new THREE.Sprite(
+                    new THREE.SpriteMaterial({ map: pinRingTexture, depthTest: false, depthWrite: false, transparent: true }),
+                );
+                sprite.renderOrder = 999;
+                sprite.scale.setScalar(dims.tileWorldSize * 2.6);
+                scene.add(sprite);
+                pinRings.set(id, sprite);
+            }
+            sprite.position.copy(antWorldPos(renderAnt, renderAnt.where));
+        }
     }
 
     function startTween(toPos: THREE.Vector3, toTarget: THREE.Vector3): void {
@@ -470,6 +505,7 @@ export function startRenderLoop(
             lastHeadings.set(id, renderAnt.headingRad);
         }
         latestRenderAnts = renderAnts;
+        syncPinRings();
         antProps.update(curr, renderAnts);
         corpseProps.update(curr);
         broodProps.update(curr);
@@ -554,6 +590,9 @@ export function startRenderLoop(
             controls.update();
         },
         exitFocus,
+        setPinnedAnts: (antIds) => {
+            pinnedIds = new Set(antIds);
+        },
         focusAnt: (antId) => {
             const renderAnt = latestRenderAnts.get(antId);
             if (renderAnt) {

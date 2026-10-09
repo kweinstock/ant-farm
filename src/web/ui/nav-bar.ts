@@ -1,6 +1,7 @@
 // PHASE 15: the menu, one bar for every screen size. Three buttons open
 // "screens" — the control panel shown as a popover above the bar (Colony =
-// the stats dashboard, View = camera and overlay toggles) or the About modal —
+// the stats dashboard, View = camera and overlay toggles), the Pinned list
+// (ui/pinned-tray.ts), or the About modal —
 // and an arrow sits on either side to step through the ants. Stepping selects
 // the ant, which opens its card (ui/ant-card.ts).
 //
@@ -11,7 +12,7 @@
 import { MOBILE_MAX_WIDTH, NAV_HEIGHT_REM } from "./layout";
 import { icon, type IconName } from "./icons";
 
-export type NavScreen = "colony" | "view";
+export type NavScreen = "colony" | "view" | "pins";
 
 const STYLE_ID = "ant-farm-nav-style";
 
@@ -165,14 +166,16 @@ export function mountNavBar(parent: HTMLElement, options: NavBarOptions): { clos
 
     const colony = tab("colony", "Colony", () => setActive(active === "colony" ? null : "colony"));
     const view = tab("view", "View", () => setActive(active === "view" ? null : "view"));
+    const pinned = tab("pin", "Pinned", () => setActive(active === "pins" ? null : "pins"));
     const about = tab("about", "About", () => {
         setActive(null);
         options.onAbout();
     });
     tabs.set("colony", colony);
     tabs.set("view", view);
+    tabs.set("pins", pinned);
 
-    bar.append(arrow("left", "Previous ant", -1), colony, view, about, arrow("right", "Next ant", 1));
+    bar.append(arrow("left", "Previous ant", -1), colony, view, pinned, about, arrow("right", "Next ant", 1));
     parent.appendChild(bar);
 
     return { closeScreen: () => setActive(null) };
