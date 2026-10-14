@@ -11,7 +11,7 @@
 // object wakes at two speeds to stay inside the free-tier request budget:
 //   watched (>=1 socket)  every ALARM_MS (5 s): run the elapsed ticks (capped
 //                         at MAX_CATCHUP_TICKS) and send one Batch of Diffs
-//   idle (no sockets)     every IDLE_ALARM_MS (~20 min): run the whole gap in
+//   idle (no sockets)     every IDLE_ALARM_MS (2 min): run the whole gap in
 //                         one go (<= MAX_RUN_TICKS), no snapshots/diffs, save,
 //                         then sleep (the object is evicted until the next alarm)
 // The first viewer after an idle stretch is snapped to the present: the

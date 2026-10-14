@@ -549,7 +549,7 @@ Built and deployed to `testing.kweinstock.dev/ant-farm/`.
   discarded with a log line instead of crashing.
 - `src/worker/loop.ts` — `ticksToRun` (capped), `replayStartMs`.
 - Cadence: watched = 5 s alarms; the first viewer is snapped to the present;
-  idle = one long alarm (`IDLE_ALARM_MS`, ~19.7 min) running up to `MAX_RUN_TICKS`.
+  idle = one long alarm (`IDLE_ALARM_MS`, now 2 min so connect-time catch-up stays short) running up to `MAX_RUN_TICKS`.
 - Tests: eviction / resume / replay / schema mismatch / autosave in `do.test.ts`.
 
 **Still to confirm in production:** a redeploy with an existing save resumes

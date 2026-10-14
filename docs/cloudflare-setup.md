@@ -105,7 +105,7 @@ cheap; the broadcast fan-out is not billed per-viewer).
 sim step, not the alarm cadence. While at least one viewer is connected the object
 wakes every `ALARM_MS` (5 s, ~17k alarms/day if someone watches 24 h) and sends the
 ~25 ticks since the last wake as one `Batch`. With nobody connected it wakes every
-`IDLE_ALARM_MS` (~20 min, ~73/day), runs the whole gap in one go (at most
+`IDLE_ALARM_MS` (2 min, ~720/day), runs the whole gap in one go (at most
 `MAX_RUN_TICKS` ticks, sized to the per-invocation CPU limit), saves, and is evicted
 until the next alarm. The first viewer after an idle stretch is caught up to the
 present before they get their snapshot. The table above is therefore the *watched*
