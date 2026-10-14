@@ -77,6 +77,15 @@ export class ColonyDO extends DurableObject<Env> {
         });
     }
 
+    // Called by the cron watchdog (worker/index.ts). Waking the object runs the
+    // constructor; this also re-arms the alarm if the chain died (e.g. a CPU-limit
+    // reset), which nothing else would ever do for an object nobody visits.
+    async ensureAlarm(): Promise<void> {
+        if ((await this.ctx.storage.getAlarm()) === null) {
+            await this.ctx.storage.setAlarm(Date.now() + (this.hasViewers() ? ALARM_MS : IDLE_ALARM_MS));
+        }
+    }
+
     async fetch(request: Request): Promise<Response> {
         const url = new URL(request.url);
 

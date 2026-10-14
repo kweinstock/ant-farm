@@ -23,6 +23,7 @@
     "not_found_handling": "single-page-application"
   },
   "observability": { "enabled": true },
+  "triggers": { "crons": ["*/5 * * * *"] },
   "durable_objects": {
     "bindings": [
       {"name": "COLONY", "class_name": "ColonyDO"}
